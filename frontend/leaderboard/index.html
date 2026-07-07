@@ -2,12 +2,58 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>排行榜</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>迷宫游戏 - 排行榜</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <h1>排行榜 - 队员B负责此模块</h1>
-    <p>此页面由 <strong>队员B</strong> 开发</p>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <a href="../maze-game/index.html" class="nav-link">🎮 迷宫游戏</a>
+        <span class="nav-title">🏆 排行榜</span>
+    </nav>
+
+    <!-- 主容器 -->
+    <div class="container">
+        <h1>迷宫排行榜</h1>
+
+        <!-- 关卡切换按钮 -->
+        <div class="level-tabs" id="levelTabs">
+            <!-- 由 JS 动态生成 -->
+        </div>
+
+        <!-- 刷新按钮 -->
+        <div class="toolbar">
+            <button class="btn-refresh" id="btnRefresh">🔄 刷新数据</button>
+        </div>
+
+        <!-- 排行榜表格 -->
+        <table class="leaderboard-table" id="leaderboardTable">
+            <thead>
+                <tr>
+                    <th>排名</th>
+                    <th>玩家</th>
+                    <th>通关时间</th>
+                    <th>关卡</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody">
+                <!-- 由 JS 动态生成 -->
+            </tbody>
+        </table>
+
+        <!-- 空状态提示 -->
+        <div class="empty-state" id="emptyState" style="display: none;">
+            <p>📭 暂无成绩记录</p>
+            <p>快去迷宫游戏中挑战吧！</p>
+        </div>
+
+        <!-- 加载状态 -->
+        <div class="loading" id="loading">
+            <p>加载中...</p>
+        </div>
+    </div>
+
     <script src="leaderboard.js"></script>
 </body>
 </html>
