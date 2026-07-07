@@ -10,7 +10,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 端口：5002
 """
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import sqlite3
 import os
@@ -20,10 +20,6 @@ CORS(app)  # 必须加！否则前端跨域调不到
 
 # 数据库文件路径
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data.db')
-
-# 前端文件目录
-FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'frontend')
-LEADERBOARD_DIR = os.path.join(FRONTEND_DIR, 'leaderboard')
 
 # ============================================================
 # 数据库初始化
@@ -169,20 +165,6 @@ def get_levels():
     return jsonify({"levels": levels})
 
 
-# ===== 静态文件服务：让浏览器直接访问 localhost:5002 就能看排行榜 =====
-# 注意：必须放在所有 /api/ 路由之后，否则 API 请求会被当作静态文件处理
-
-@app.route('/')
-def serve_leaderboard():
-    """提供排行榜首页"""
-    return send_from_directory(LEADERBOARD_DIR, 'index.html')
-
-@app.route('/<path:filename>')
-def serve_leaderboard_static(filename):
-    """提供排行榜的 CSS、JS 等静态资源"""
-    return send_from_directory(LEADERBOARD_DIR, filename)
-
-
 # ============================================================
 # 启动入口
 # ============================================================
@@ -191,6 +173,5 @@ if __name__ == '__main__':
     # 启动时自动建表
     init_db()
     print("[OK] Game API started (Player D)")
-    print("   Frontend: http://localhost:5002")
-    print("   API:      http://localhost:5002/api/leaderboard")
+    print("   API: http://localhost:5002/api/leaderboard")
     app.run(port=5002, debug=True)
