@@ -21,7 +21,6 @@ CORS(app)  # 必须加！否则前端跨域调不到
 # 数据库文件路径
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data.db')
 
-
 # ============================================================
 # 数据库初始化
 # 数据结构：SQLite 关系型数据库表，用于持久化存储成绩
@@ -174,8 +173,5 @@ if __name__ == '__main__':
     # 启动时自动建表
     init_db()
     print("[OK] Game API started (Player D)")
-    print("   - POST /api/score       Submit score")
-    print("   - GET  /api/leaderboard  Leaderboard")
-    print("   - GET  /api/levels       Level list")
-    print("   Port: 5002")
+    print("   API: http://localhost:5002/api/leaderboard")
     app.run(port=5002, debug=True)

@@ -34,7 +34,6 @@ app = Flask(__name__)
 # 启用 CORS 跨域支持（必须加，否则前端调不到！）
 CORS(app)
 
-
 def generate_maze(width, height):
     """
     使用 DFS（深度优先搜索）+ 栈 生成迷宫
@@ -174,5 +173,6 @@ def maze_generate():
 
 
 if __name__ == "__main__":
-    # 启动 Flask 应用，监听 5001 端口
+    print("[OK] Maze API started (Player C)")
+    print("   API: http://localhost:5001/api/maze/generate?width=21&height=21")
     app.run(host="0.0.0.0", port=5001, debug=True)
