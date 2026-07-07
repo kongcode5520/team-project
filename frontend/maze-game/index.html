@@ -2,12 +2,43 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>迷宫游戏</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <h1>迷宫游戏 - 队员A负责此模块</h1>
-    <p>此页面由 <strong>队员A</strong> 开发</p>
+    <div class="container">
+        <h1>🎮 迷宫游戏</h1>
+
+        <!-- 顶部控制栏 -->
+        <div class="controls">
+            <div class="timer">
+                ⏱ 用时：<span id="timer">0</span> 秒
+            </div>
+            <div class="player-input">
+                <label for="playerName">玩家名：</label>
+                <input type="text" id="playerName" placeholder="输入你的名字" maxlength="20">
+            </div>
+            <div class="level-select">
+                <label for="levelSelect">关卡：</label>
+                <select id="levelSelect">
+                    <option value="11">初级 (11×11)</option>
+                    <option value="21" selected>中级 (21×21)</option>
+                    <option value="31">高级 (31×31)</option>
+                </select>
+            </div>
+            <button id="regenerateBtn">🔄 重新生成迷宫</button>
+        </div>
+
+        <!-- 迷宫画布 -->
+        <div class="canvas-wrapper">
+            <canvas id="mazeCanvas" width="500" height="500"></canvas>
+        </div>
+
+        <!-- 操作提示 -->
+        <p class="hint">使用键盘 ↑↓←→ 方向键移动绿色圆点，到达红色终点即可通关！</p>
+    </div>
+
     <script src="maze.js"></script>
 </body>
 </html>
