@@ -1,158 +1,204 @@
 /* ========================================
-   迷宫游戏 — 迷宫渲染 + 操控逻辑
-   队员A 负责此模块
+   Maze Game - Player A
+   Data structure: 2D array/matrix for maze grid
+   0 = path, 1 = wall
 
-   /* 数据结构：二维数组/矩阵，存储迷宫每个格子的值 */
-
-   依赖接口：
-   - GET  /api/maze/generate  (队员C, port 5001)
-   - POST /api/score          (队员D, port 5002)
+   API deps:
+   - GET  /api/maze/generate  (Player C, port 5001)
+   - POST /api/score          (Player D, port 5002)
    ======================================== */
 
-// ==================== DOM 元素 ====================
-const canvas = document.getElementById('mazeCanvas');
-const ctx = canvas.getContext('2d');
-const timerEl = document.getElementById('timer');
-const playerNameInput = document.getElementById('playerName');
-const levelSelect = document.getElementById('levelSelect');
-const regenBtn = document.getElementById('regenerateBtn');
+// ==================== DOM Elements ====================
+var canvas = document.getElementById('mazeCanvas');
+var ctx = canvas.getContext('2d');
+var timerEl = document.getElementById('timer');
+var playerNameInput = document.getElementById('playerName');
+var levelSelect = document.getElementById('levelSelect');
+var regenBtn = document.getElementById('regenerateBtn');
 
-// ==================== 游戏状态 ====================
+// ==================== Game State ====================
+var maze = [];
+var mazeWidth = 21;
+var mazeHeight = 21;
+var cellSize = 20;
 
-/* 数据结构：二维数组/矩阵，存储迷宫每个格子的值
- * maze[row][col]:
- *   0 = 路（可通行）
- *   1 = 墙（不可通行）
- */
-let maze = [];
+var playerRow = 1;
+var playerCol = 1;
+var endRow = 1;
+var endCol = 1;
 
-let mazeWidth = 21;   // 迷宫宽度（列数）
-let mazeHeight = 21;  // 迷宫高度（行数）
-let cellSize = 20;    // 每个格子的像素大小（自适应计算）
+var startTime = null;
+var elapsedSeconds = 0;
+var timerInterval = null;
+var gameStarted = false;
+var gameFinished = false;
 
-// 玩家位置（网格坐标）
-let playerRow = 1;
-let playerCol = 1;
+var offsetX = 0;
+var offsetY = 0;
+var isLoading = false;
 
-// 终点位置（网格坐标）
-let endRow = 1;
-let endCol = 1;
+// ==================== Maze Generation (Local) ====================
 
-// 计时器
-let startTime = null;     // 首次按键的时间戳
-let elapsedSeconds = 0;   // 已用秒数
-let timerInterval = null; // setInterval 句柄
-let gameStarted = false;  // 是否已开始
-let gameFinished = false; // 是否已通关
+function shuffle(arr) {
+    for (var i = arr.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    }
+    return arr;
+}
 
-// 画布偏移（让迷宫在画布上居中）
-let offsetX = 0;
-let offsetY = 0;
+function generateMaze(w, h) {
+    if (w % 2 === 0) w++;
+    if (h % 2 === 0) h++;
 
-// ==================== API 调用 ====================
-
-/**
- * 调用队员C 的接口：生成迷宫
- * GET http://localhost:5001/api/maze/generate?width=21&height=21
- */
-async function fetchMaze(width, height) {
-    const url = `http://localhost:5001/api/maze/generate?width=${width}&height=${height}`;
-    try {
-        const res = await fetch(url);
-        if (!res.ok) {
-            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    var grid = [];
+    for (var r = 0; r < h; r++) {
+        grid[r] = [];
+        for (var c = 0; c < w; c++) {
+            grid[r][c] = 1;
         }
-        const data = await res.json();
-        // data 格式: { maze: [[...], ...], width: 21, height: 21 }
-        return data;
-    } catch (err) {
-        console.error('获取迷宫失败：', err);
-        alert('无法连接迷宫生成服务 (队员C, port 5001)，请确认后端已启动。');
-        return null;
     }
-}
 
-/**
- * 调用队员D 的接口：提交成绩
- * POST http://localhost:5002/api/score
- * 请求体: { player: "玩家名", time: 35, level: 1 }
- */
-async function submitScore(playerName, time, level) {
-    const url = 'http://localhost:5002/api/score';
-    try {
-        const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                player: playerName,
-                time: time,
-                level: level
-            })
-        });
-        const data = await res.json();
-        // data 格式: { success: true, message: "成绩已保存" }
-        return data;
-    } catch (err) {
-        console.error('提交成绩失败：', err);
-        return { success: false, message: '网络错误，成绩未保存' };
-    }
-}
+    grid[1][1] = 0;
+    // Data structure: Stack for DFS backtracking
+    var stack = [[1, 1]];
 
-// ==================== 渲染引擎 ====================
+    while (stack.length > 0) {
+        var cur = stack[stack.length - 1];
+        var cx = cur[0], cy = cur[1];
 
-/**
- * 绘制整个迷宫到 Canvas
- * 墙壁用深灰色，道路用白色
- * 玩家用绿色圆形，终点用红色方块
- */
-function renderMaze() {
-    // 计算格子大小，确保迷宫适合 500×500 的画布
-    cellSize = Math.floor(500 / Math.max(mazeWidth, mazeHeight));
-
-    // 计算偏移量使迷宫居中
-    offsetX = Math.floor((500 - mazeWidth * cellSize) / 2);
-    offsetY = Math.floor((500 - mazeHeight * cellSize) / 2);
-
-    // 清空画布
-    ctx.clearRect(0, 0, 500, 500);
-
-    // 1. 绘制迷宫格子（墙壁和道路）
-    for (let row = 0; row < mazeHeight; row++) {
-        for (let col = 0; col < mazeWidth; col++) {
-            const x = offsetX + col * cellSize;
-            const y = offsetY + row * cellSize;
-
-            if (maze[row][col] === 1) {
-                // 墙壁：深灰色
-                ctx.fillStyle = '#3a3a4a';
-                ctx.fillRect(x, y, cellSize, cellSize);
-            } else {
-                // 道路：白色/浅色
-                ctx.fillStyle = '#f0f0f0';
-                ctx.fillRect(x, y, cellSize, cellSize);
+        var neighbors = [];
+        var dirs = [[0, 2], [2, 0], [0, -2], [-2, 0]];
+        for (var d = 0; d < dirs.length; d++) {
+            var nx = cx + dirs[d][0];
+            var ny = cy + dirs[d][1];
+            if (nx > 0 && nx < w - 1 && ny > 0 && ny < h - 1 && grid[ny][nx] === 1) {
+                neighbors.push([nx, ny]);
             }
         }
+
+        if (neighbors.length > 0) {
+            var next = neighbors[Math.floor(Math.random() * neighbors.length)];
+            var wx = (cx + next[0]) / 2;
+            var wy = (cy + next[1]) / 2;
+            grid[wy][wx] = 0;
+            grid[next[1]][next[0]] = 0;
+            stack.push(next);
+        } else {
+            stack.pop();
+        }
     }
 
-    // 2. 绘制终点（红色方块，在终点格子的中心区域）
-    const endX = offsetX + endCol * cellSize;
-    const endY = offsetY + endRow * cellSize;
+    grid[h - 2][w - 2] = 0;
+    return grid;
+}
+
+// ==================== API Calls ====================
+
+function fetchMazeFromAPI(width, height, callback) {
+    var url = 'http://localhost:5001/api/maze/generate?width=' + width + '&height=' + height;
+    console.log('[Maze] Fetching from API:', url);
+
+    var xhr = new XMLHttpRequest();
+    xhr.timeout = 5000;
+    xhr.open('GET', url, true);
+
+    xhr.onload = function() {
+        if (xhr.status === 200) {
+            try {
+                var data = JSON.parse(xhr.responseText);
+                if (data && data.maze) {
+                    console.log('[Maze] API returned maze:', data.width, 'x', data.height);
+                    callback(data);
+                    return;
+                }
+            } catch (e) {
+                console.warn('[Maze] API parse error:', e);
+            }
+        }
+        console.warn('[Maze] API unavailable, using local maze');
+        callback(null);
+    };
+
+    xhr.onerror = function() {
+        console.warn('[Maze] API network error, using local maze');
+        callback(null);
+    };
+
+    xhr.ontimeout = function() {
+        console.warn('[Maze] API timeout, using local maze');
+        callback(null);
+    };
+
+    xhr.send();
+}
+
+function submitScore(playerName, time, level) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', 'http://localhost:5002/api/score', true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+
+    xhr.onload = function() {
+        if (xhr.status === 200) {
+            var data = JSON.parse(xhr.responseText);
+            if (data.success) {
+                console.log('[Maze] Score saved, level:', level);
+            } else {
+                console.warn('[Maze] Score save failed:', data.message);
+            }
+        }
+    };
+
+    xhr.onerror = function() {
+        console.warn('[Maze] Score submit network error');
+    };
+
+    xhr.send(JSON.stringify({
+        player: playerName,
+        time: time,
+        level: level
+    }));
+}
+
+// ==================== Render Engine ====================
+
+function renderMaze() {
+    // Use canvas's CSS display size, capped for performance
+    var canvasSize = Math.min(window.innerWidth * 0.9, window.innerHeight * 0.85);
+    canvas.width = canvasSize;
+    canvas.height = canvasSize;
+    cellSize = Math.floor(canvasSize / Math.max(mazeWidth, mazeHeight));
+    offsetX = Math.floor((canvasSize - mazeWidth * cellSize) / 2);
+    offsetY = Math.floor((canvasSize - mazeHeight * cellSize) / 2);
+
+    ctx.clearRect(0, 0, canvasSize, canvasSize);
+
+    // Draw grid
+    for (var row = 0; row < mazeHeight; row++) {
+        for (var col = 0; col < mazeWidth; col++) {
+            var x = offsetX + col * cellSize;
+            var y = offsetY + row * cellSize;
+            if (maze[row][col] === 1) {
+                ctx.fillStyle = '#3a3a4a';
+            } else {
+                ctx.fillStyle = '#f0f0f0';
+            }
+            ctx.fillRect(x, y, cellSize, cellSize);
+        }
+    }
+
+    // Draw end point (red)
+    var ex = offsetX + endCol * cellSize;
+    var ey = offsetY + endRow * cellSize;
     ctx.fillStyle = '#e94560';
-    ctx.fillRect(endX + 2, endY + 2, cellSize - 4, cellSize - 4);
-    // 终点标记文字
-    ctx.fillStyle = '#fff';
-    ctx.font = `${Math.max(10, cellSize * 0.5)}px 'Microsoft YaHei'`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('终', endX + cellSize / 2, endY + cellSize / 2);
+    ctx.fillRect(ex + 2, ey + 2, cellSize - 4, cellSize - 4);
 
-    // 3. 绘制玩家（绿色圆形）
-    const playerX = offsetX + playerCol * cellSize + cellSize / 2;
-    const playerY = offsetY + playerRow * cellSize + cellSize / 2;
-    const playerRadius = Math.max(4, cellSize * 0.35);
-
+    // Draw player (green circle)
+    var px = offsetX + playerCol * cellSize + cellSize / 2;
+    var py = offsetY + playerRow * cellSize + cellSize / 2;
+    var pr = Math.max(4, cellSize * 0.35);
     ctx.beginPath();
-    ctx.arc(playerX, playerY, playerRadius, 0, Math.PI * 2);
+    ctx.arc(px, py, pr, 0, Math.PI * 2);
     ctx.fillStyle = '#4ecca3';
     ctx.fill();
     ctx.strokeStyle = '#2d8a6e';
@@ -160,11 +206,8 @@ function renderMaze() {
     ctx.stroke();
 }
 
-// ==================== 计时器 ====================
+// ==================== Timer ====================
 
-/**
- * 更新计时器显示
- */
 function updateTimer() {
     if (startTime !== null) {
         elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
@@ -172,9 +215,6 @@ function updateTimer() {
     timerEl.textContent = elapsedSeconds;
 }
 
-/**
- * 启动计时器（首次按键时调用）
- */
 function startTimer() {
     if (gameStarted) return;
     gameStarted = true;
@@ -182,20 +222,14 @@ function startTimer() {
     timerInterval = setInterval(updateTimer, 200);
 }
 
-/**
- * 停止计时器（通关时调用）
- */
 function stopTimer() {
     if (timerInterval) {
         clearInterval(timerInterval);
         timerInterval = null;
     }
-    updateTimer(); // 最后一次更新确保精确
+    updateTimer();
 }
 
-/**
- * 重置计时器
- */
 function resetTimer() {
     stopTimer();
     startTime = null;
@@ -204,177 +238,125 @@ function resetTimer() {
     timerEl.textContent = '0';
 }
 
-// ==================== 玩家移动 ====================
+// ==================== Player Movement ====================
 
-/**
- * 尝试将玩家移动到目标格子
- * 只能在路(0)上走，不能穿墙(1)
- */
 function movePlayer(dRow, dCol) {
-    if (gameFinished) return; // 已通关，禁止移动
+    if (gameFinished) return;
 
-    const newRow = playerRow + dRow;
-    const newCol = playerCol + dCol;
+    var nr = playerRow + dRow;
+    var nc = playerCol + dCol;
 
-    // 边界检查
-    if (newRow < 0 || newRow >= mazeHeight || newCol < 0 || newCol >= mazeWidth) {
-        return;
-    }
+    if (nr < 0 || nr >= mazeHeight || nc < 0 || nc >= mazeWidth) return;
+    if (maze[nr][nc] === 1) return;
 
-    // 碰撞检测：不能穿墙（值为 1 的格子不可通行）
-    if (maze[newRow][newCol] === 1) {
-        return;
-    }
-
-    // 移动玩家
-    playerRow = newRow;
-    playerCol = newCol;
-
-    // 重绘
+    playerRow = nr;
+    playerCol = nc;
     renderMaze();
 
-    // 检查是否到达终点
     if (playerRow === endRow && playerCol === endCol) {
         onReachEnd();
     }
 }
 
-/**
- * 到达终点时的处理
- */
-async function onReachEnd() {
+function onReachEnd() {
     gameFinished = true;
     stopTimer();
 
-    // 弹出通关提示
-    const playerName = playerNameInput.value.trim() || '匿名玩家';
-    alert(`🎉 恭喜通关！\n玩家：${playerName}\n用时：${elapsedSeconds} 秒`);
+    var playerName = playerNameInput.value.trim() || 'Player';
+    alert('Clear! Player: ' + playerName + ' Time: ' + elapsedSeconds + 's');
 
-    // 提交成绩到队员D 的接口
-    const result = await submitScore(playerName, elapsedSeconds, 1);
-    if (result.success) {
-        console.log('成绩已保存');
-    } else {
-        console.warn('成绩提交失败：', result.message);
-    }
+    var size = parseInt(levelSelect.value);
+    var levelMap = {11: 1, 21: 2, 31: 3};
+    var level = levelMap[size] || 1;
+
+    submitScore(playerName, elapsedSeconds, level);
 }
 
-// ==================== 游戏初始化 & 重置 ====================
+// ==================== Game Init & Reset ====================
 
-/**
- * 加载迷宫：调用队员C 接口获取迷宫数据
- */
-async function loadMaze() {
-    const size = parseInt(levelSelect.value);
-    const data = await fetchMaze(size, size);
-
-    if (!data || !data.maze) {
-        // 获取失败，使用一个简单的后备迷宫
-        console.warn('使用本地后备迷宫');
-        maze = generateFallbackMaze(size, size);
-        mazeWidth = size;
-        mazeHeight = size;
-    } else {
-        maze = data.maze;
-        mazeWidth = data.width;
-        mazeHeight = data.height;
-    }
-
-    // 设置玩家起点：固定 maze[1][1]
+function setupGame() {
     playerRow = 1;
     playerCol = 1;
-    // 确保起点是路
     if (maze[playerRow] && maze[playerRow][playerCol] !== undefined) {
         maze[playerRow][playerCol] = 0;
     }
 
-    // 设置终点：固定 maze[height-2][width-2]
     endRow = mazeHeight - 2;
     endCol = mazeWidth - 2;
-    // 确保终点是路
+    if (endRow < 1) endRow = mazeHeight - 1;
+    if (endCol < 1) endCol = mazeWidth - 1;
     if (maze[endRow] && maze[endRow][endCol] !== undefined) {
         maze[endRow][endCol] = 0;
     }
 
-    // 重置游戏状态
     gameFinished = false;
     resetTimer();
+}
 
-    // 渲染迷宫
+function loadMaze() {
+    if (isLoading) {
+        console.log('[Maze] Already loading, skip');
+        return;
+    }
+    isLoading = true;
+
+    var size = parseInt(levelSelect.value);
+
+    // Step 1: Generate local maze immediately (always works)
+    console.log('[Maze] Local generation, size:', size);
+    maze = generateMaze(size, size);
+    mazeWidth = size;
+    mazeHeight = size;
+    setupGame();
     renderMaze();
+
+    // Step 2: Try API in background for better maze
+    fetchMazeFromAPI(size, size, function(data) {
+        if (data && data.maze) {
+            console.log('[Maze] Replacing with API maze');
+            maze = data.maze;
+            mazeWidth = data.width;
+            mazeHeight = data.height;
+            setupGame();
+            renderMaze();
+        }
+        // Always restore button
+        regenBtn.disabled = false;
+        regenBtn.textContent = 'New Maze';
+        isLoading = false;
+    });
+
+    // Also set a fallback timeout in case callback never fires
+    setTimeout(function() {
+        if (isLoading) {
+            console.log('[Maze] Fallback restore');
+            regenBtn.disabled = false;
+            regenBtn.textContent = 'New Maze';
+            isLoading = false;
+        }
+    }, 6000);
 }
 
-/**
- * 后备迷宫生成（当后端不可用时使用）
- * 生成一个简单的迷宫供测试
- */
-function generateFallbackMaze(width, height) {
-    // 确保宽高为奇数
-    if (width % 2 === 0) width++;
-    if (height % 2 === 0) height++;
+// ==================== Event Listeners ====================
 
-    // 初始化为全墙
-    const grid = [];
-    for (let r = 0; r < height; r++) {
-        grid[r] = [];
-        for (let c = 0; c < width; c++) {
-            grid[r][c] = 1;
-        }
-    }
-
-    // 简单递归分割生成通路（确保有解）
-    function carve(r, c) {
-        grid[r][c] = 0;
-        const dirs = [[-2, 0], [0, 2], [2, 0], [0, -2]];
-        // 随机打乱方向
-        for (let i = dirs.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
-        }
-        for (const [dr, dc] of dirs) {
-            const nr = r + dr;
-            const nc = c + dc;
-            if (nr > 0 && nr < height - 1 && nc > 0 && nc < width - 1 && grid[nr][nc] === 1) {
-                // 打通中间墙
-                grid[r + dr / 2][c + dc / 2] = 0;
-                carve(nr, nc);
-            }
-        }
-    }
-
-    carve(1, 1);
-    return grid;
-}
-
-// ==================== 事件监听 ====================
-
-// 键盘方向键控制
-document.addEventListener('keydown', (e) => {
-    // 如果焦点在输入框里，不拦截（但方向键在输入框一般不会用到）
+document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
-        // 允许玩家名输入框正常打字
-        if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-            // 方向键即使在输入框也用于游戏
-        } else {
-            return;
-        }
+        return;
     }
 
-    if (gameFinished) return; // 通关后不再响应
+    if (gameFinished) return;
 
-    let dRow = 0, dCol = 0;
-
+    var dRow = 0, dCol = 0;
     switch (e.key) {
         case 'ArrowUp':    dRow = -1; break;
         case 'ArrowDown':  dRow = 1;  break;
         case 'ArrowLeft':  dCol = -1; break;
         case 'ArrowRight': dCol = 1;  break;
-        default: return; // 非方向键，不处理
+        default: return;
     }
 
-    e.preventDefault(); // 阻止页面滚动
+    e.preventDefault();
 
-    // 首次按键启动计时器
     if (!gameStarted) {
         startTimer();
     }
@@ -382,17 +364,13 @@ document.addEventListener('keydown', (e) => {
     movePlayer(dRow, dCol);
 });
 
-// 重新生成迷宫按钮
-regenBtn.addEventListener('click', () => {
+regenBtn.addEventListener('click', function() {
     loadMaze();
 });
 
-// 关卡切换时自动重新加载
-levelSelect.addEventListener('change', () => {
+levelSelect.addEventListener('change', function() {
     loadMaze();
 });
 
-// ==================== 启动 ====================
-
-// 页面加载完成后自动获取迷宫
+// ==================== Start ====================
 loadMaze();
