@@ -20,6 +20,37 @@ body {
     min-height: 100vh;
 }
 
+/* --- 导航栏 --- */
+.navbar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 14px 40px;
+    background-color: #16213e;
+    border-bottom: 2px solid #0f3460;
+    margin-bottom: 24px;
+    width: 100%;
+}
+
+.nav-title {
+    font-size: 20px;
+    font-weight: bold;
+    color: #fff;
+}
+
+.nav-link {
+    color: #e94560;
+    text-decoration: none;
+    font-size: 18px;
+    font-weight: bold;
+    transition: color 0.2s;
+}
+
+.nav-link:hover {
+    color: #ff6b81;
+}
+
 /* --- 主容器：页面居中 --- */
 .container {
     text-align: center;
