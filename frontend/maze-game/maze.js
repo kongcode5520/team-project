@@ -20,6 +20,7 @@ var player1NameInput = document.getElementById('player1Name');
 var player2NameInput = document.getElementById('player2Name');
 var levelSelect = document.getElementById('levelSelect');
 var regenBtn = document.getElementById('regenerateBtn');
+var fogToggleBtn = document.getElementById('fogToggleBtn');
 var statusEl = document.getElementById('gameStatus');
 
 // ==================== Game State ====================
@@ -32,6 +33,10 @@ var endCol = 1;
 var offsetX = 0;
 var offsetY = 0;
 var isLoading = false;
+
+// Fog of War state
+var fogEnabled = true;
+var fogRadius = 3;  // Cells visible around each player
 
 // Two player states
 // Data structure: Objects with independent position/timer/finished state
@@ -158,13 +163,45 @@ function renderMaze() {
         }
     }
 
-    // Draw end point (gold)
-    var ex = offsetX + endCol * cellSize;
-    var ey = offsetY + endRow * cellSize;
-    ctx.fillStyle = '#e9c46a';
-    ctx.fillRect(ex + 2, ey + 2, cellSize - 4, cellSize - 4);
+    // ---- Fog of War overlay ----
+    if (fogEnabled) {
+        for (var row = 0; row < mazeHeight; row++) {
+            for (var col = 0; col < mazeWidth; col++) {
+                // Calculate Chebyshev distance (square vision) to nearest player
+                var d1 = Math.max(Math.abs(row - players[0].row), Math.abs(col - players[0].col));
+                var d2 = Math.max(Math.abs(row - players[1].row), Math.abs(col - players[1].col));
+                var minDist = Math.min(d1, d2);
 
-    // Draw both players
+                if (minDist > fogRadius) {
+                    // Full fog — completely hidden, fully opaque
+                    var x = offsetX + col * cellSize;
+                    var y = offsetY + row * cellSize;
+                    ctx.fillStyle = '#0a0a1e';
+                    ctx.fillRect(x, y, cellSize, cellSize);
+                } else if (minDist === fogRadius) {
+                    // Edge fade — heavy mist, barely visible
+                    var x = offsetX + col * cellSize;
+                    var y = offsetY + row * cellSize;
+                    ctx.fillStyle = 'rgba(10, 10, 30, 0.75)';
+                    ctx.fillRect(x, y, cellSize, cellSize);
+                }
+                // dist < fogRadius: no overlay, cell is fully visible
+            }
+        }
+    }
+
+    // Draw end point (gold) — only visible when within fog range of a player
+    var endDist1 = Math.max(Math.abs(endRow - players[0].row), Math.abs(endCol - players[0].col));
+    var endDist2 = Math.max(Math.abs(endRow - players[1].row), Math.abs(endCol - players[1].col));
+    var endMinDist = Math.min(endDist1, endDist2);
+    if (!fogEnabled || endMinDist <= fogRadius) {
+        var ex = offsetX + endCol * cellSize;
+        var ey = offsetY + endRow * cellSize;
+        ctx.fillStyle = '#e9c46a';
+        ctx.fillRect(ex + 2, ey + 2, cellSize - 4, cellSize - 4);
+    }
+
+    // Draw both players (always visible)
     drawPlayer(players[0]);
     drawPlayer(players[1]);
 }
@@ -402,6 +439,18 @@ document.addEventListener('keydown', function(e) {
 
 regenBtn.addEventListener('click', function() { loadMaze(); });
 levelSelect.addEventListener('change', function() { loadMaze(); });
+
+fogToggleBtn.addEventListener('click', function() {
+    fogEnabled = !fogEnabled;
+    if (fogEnabled) {
+        fogToggleBtn.textContent = '🌫 关闭迷雾';
+        fogToggleBtn.classList.remove('fog-off');
+    } else {
+        fogToggleBtn.textContent = '☀ 开启迷雾';
+        fogToggleBtn.classList.add('fog-off');
+    }
+    renderMaze();
+});
 
 // ==================== Start ====================
 loadMaze();
