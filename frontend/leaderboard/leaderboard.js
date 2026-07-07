@@ -7,10 +7,9 @@
  */
 
 // ===== 常量 =====
-// 后端 API 地址（队员D 实现）
-const API_BASE = 'http://localhost:5002';
-const API_LEADERBOARD = `${API_BASE}/api/leaderboard`;
-const API_LEVELS = `${API_BASE}/api/levels`;
+// 排行榜页面由 localhost:5002 提供，API 也在同端口，使用相对路径
+const API_LEADERBOARD = '/api/leaderboard';
+const API_LEVELS = '/api/levels';
 
 // ===== 状态变量 =====
 // 数据结构：数组，存储从后端获取的排行榜原始数据

@@ -53,10 +53,11 @@ let offsetY = 0;
 
 /**
  * 调用队员C 的接口：生成迷宫
- * GET http://localhost:5001/api/maze/generate?width=21&height=21
+ * 页面对localhost:5001提供，API也在同端口，使用相对路径
+ * GET /api/maze/generate?width=21&height=21
  */
 async function fetchMaze(width, height) {
-    const url = `http://localhost:5001/api/maze/generate?width=${width}&height=${height}`;
+    const url = `/api/maze/generate?width=${width}&height=${height}`;
     try {
         const res = await fetch(url);
         if (!res.ok) {

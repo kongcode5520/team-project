@@ -27,13 +27,17 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 """
 
 import random
-from flask import Flask, jsonify, request
+import os
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 app = Flask(__name__)
-# 启用 CORS 跨域支持（必须加，否则前端调不到！）
+# 启用 CORS 跨域支持
 CORS(app)
 
+# 前端文件目录
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'frontend')
+MAZE_GAME_DIR = os.path.join(FRONTEND_DIR, 'maze-game')
 
 def generate_maze(width, height):
     """
@@ -173,6 +177,23 @@ def maze_generate():
     return jsonify(result)
 
 
+# ===== 静态文件服务：让浏览器直接访问 localhost:5001 就能玩 =====
+# 注意：必须放在所有 /api/ 路由之后，否则 API 请求会被当作静态文件处理
+
+@app.route('/')
+def serve_maze_game():
+    """提供迷宫游戏首页"""
+    return send_from_directory(MAZE_GAME_DIR, 'index.html')
+
+@app.route('/<path:filename>')
+def serve_maze_static(filename):
+    """提供迷宫游戏的 CSS、JS 等静态资源"""
+    return send_from_directory(MAZE_GAME_DIR, filename)
+
+
 if __name__ == "__main__":
+    print("[OK] Maze API started (Player C)")
+    print("   Frontend: http://localhost:5001")
+    print("   API:      http://localhost:5001/api/maze/generate?width=21&height=21")
     # 启动 Flask 应用，监听 5001 端口
     app.run(host="0.0.0.0", port=5001, debug=True)
