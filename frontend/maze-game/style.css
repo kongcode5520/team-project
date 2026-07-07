@@ -15,9 +15,11 @@ body {
     color: #e0e0e0;
     font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
     display: flex;
-    justify-content: center;
+    flex-direction: column;
     align-items: center;
     min-height: 100vh;
+    margin: 0;
+    overflow: hidden;
 }
 
 /* --- 导航栏 --- */
@@ -26,15 +28,14 @@ body {
     align-items: center;
     justify-content: center;
     gap: 24px;
-    padding: 14px 40px;
+    padding: 8px 40px;
     background-color: #16213e;
     border-bottom: 2px solid #0f3460;
-    margin-bottom: 24px;
     width: 100%;
 }
 
 .nav-title {
-    font-size: 20px;
+    font-size: 16px;
     font-weight: bold;
     color: #fff;
 }
@@ -42,7 +43,7 @@ body {
 .nav-link {
     color: #e94560;
     text-decoration: none;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: bold;
     transition: color 0.2s;
 }
@@ -51,16 +52,15 @@ body {
     color: #ff6b81;
 }
 
-/* --- 主容器：页面居中 --- */
+/* --- 主容器：全屏居中 --- */
 .container {
     text-align: center;
-    max-width: 600px;
-    padding: 20px;
+    padding: 10px;
 }
 
 .container h1 {
-    font-size: 28px;
-    margin-bottom: 18px;
+    font-size: 24px;
+    margin-bottom: 10px;
     color: #ffd460;
 }
 
@@ -70,18 +70,17 @@ body {
     flex-wrap: wrap;
     justify-content: center;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
-    padding: 12px 16px;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 8px 14px;
     background-color: #16213e;
     border-radius: 10px;
 }
 
 .timer {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: bold;
     color: #ffd460;
-    min-width: 130px;
 }
 
 .timer span {
@@ -148,14 +147,14 @@ button:active {
 }
 
 canvas {
-    border: 3px solid #533483;
-    border-radius: 8px;
+    border: 2px solid #533483;
+    border-radius: 6px;
     background-color: #0f3460;
 }
 
 /* --- 操作提示 --- */
 .hint {
-    font-size: 13px;
-    color: #888;
-    margin-top: 8px;
+    font-size: 12px;
+    color: #666;
+    margin-top: 4px;
 }

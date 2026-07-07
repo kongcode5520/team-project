@@ -163,11 +163,15 @@ function submitScore(playerName, time, level) {
 // ==================== Render Engine ====================
 
 function renderMaze() {
-    cellSize = Math.floor(500 / Math.max(mazeWidth, mazeHeight));
-    offsetX = Math.floor((500 - mazeWidth * cellSize) / 2);
-    offsetY = Math.floor((500 - mazeHeight * cellSize) / 2);
+    // Use canvas's CSS display size, capped for performance
+    var canvasSize = Math.min(window.innerWidth * 0.9, window.innerHeight * 0.85);
+    canvas.width = canvasSize;
+    canvas.height = canvasSize;
+    cellSize = Math.floor(canvasSize / Math.max(mazeWidth, mazeHeight));
+    offsetX = Math.floor((canvasSize - mazeWidth * cellSize) / 2);
+    offsetY = Math.floor((canvasSize - mazeHeight * cellSize) / 2);
 
-    ctx.clearRect(0, 0, 500, 500);
+    ctx.clearRect(0, 0, canvasSize, canvasSize);
 
     // Draw grid
     for (var row = 0; row < mazeHeight; row++) {
