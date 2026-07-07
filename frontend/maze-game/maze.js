@@ -1,7 +1,10 @@
 /* ========================================
-   Maze Game - Player A
+   Maze Game - Two-Player Mode (Player A)
    Data structure: 2D array/matrix for maze grid
    0 = path, 1 = wall
+
+   Player 1 = Green  (WASD keys)
+   Player 2 = Blue   (Arrow keys)
 
    API deps:
    - GET  /api/maze/generate  (Player C, port 5001)
@@ -11,41 +14,37 @@
 // ==================== DOM Elements ====================
 var canvas = document.getElementById('mazeCanvas');
 var ctx = canvas.getContext('2d');
-var timerEl = document.getElementById('timer');
-var playerNameInput = document.getElementById('playerName');
+var timer1El = document.getElementById('timer1');
+var timer2El = document.getElementById('timer2');
+var player1NameInput = document.getElementById('player1Name');
+var player2NameInput = document.getElementById('player2Name');
 var levelSelect = document.getElementById('levelSelect');
 var regenBtn = document.getElementById('regenerateBtn');
+var statusEl = document.getElementById('gameStatus');
 
 // ==================== Game State ====================
 var maze = [];
 var mazeWidth = 21;
 var mazeHeight = 21;
 var cellSize = 20;
-
-var playerRow = 1;
-var playerCol = 1;
 var endRow = 1;
 var endCol = 1;
-
-var startTime = null;
-var elapsedSeconds = 0;
-var timerInterval = null;
-var gameStarted = false;
-var gameFinished = false;
-
 var offsetX = 0;
 var offsetY = 0;
 var isLoading = false;
 
-// ==================== Maze Generation (Local) ====================
+// Two player states
+// Data structure: Objects with independent position/timer/finished state
+var players = [
+    { row: 1, col: 1, startTime: null, elapsed: 0, interval: null,
+      started: false, finished: false, color: '#4ecca3', outline: '#2d8a6e',
+      name: 'Player 1', label: 'P1' },
+    { row: 1, col: 1, startTime: null, elapsed: 0, interval: null,
+      started: false, finished: false, color: '#4e8cff', outline: '#2d5ecc',
+      name: 'Player 2', label: 'P2' }
+];
 
-function shuffle(arr) {
-    for (var i = arr.length - 1; i > 0; i--) {
-        var j = Math.floor(Math.random() * (i + 1));
-        var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-    }
-    return arr;
-}
+// ==================== Maze Generation (Local DFS Stack) ====================
 
 function generateMaze(w, h) {
     if (w % 2 === 0) w++;
@@ -112,24 +111,12 @@ function fetchMazeFromAPI(width, height, callback) {
                     callback(data);
                     return;
                 }
-            } catch (e) {
-                console.warn('[Maze] API parse error:', e);
-            }
+            } catch (e) { console.warn('[Maze] API parse error:', e); }
         }
-        console.warn('[Maze] API unavailable, using local maze');
         callback(null);
     };
-
-    xhr.onerror = function() {
-        console.warn('[Maze] API network error, using local maze');
-        callback(null);
-    };
-
-    xhr.ontimeout = function() {
-        console.warn('[Maze] API timeout, using local maze');
-        callback(null);
-    };
-
+    xhr.onerror = function() { callback(null); };
+    xhr.ontimeout = function() { callback(null); };
     xhr.send();
 }
 
@@ -141,30 +128,18 @@ function submitScore(playerName, time, level) {
     xhr.onload = function() {
         if (xhr.status === 200) {
             var data = JSON.parse(xhr.responseText);
-            if (data.success) {
-                console.log('[Maze] Score saved, level:', level);
-            } else {
-                console.warn('[Maze] Score save failed:', data.message);
-            }
+            console.log('[Maze] Score for', playerName, data.success ? 'saved' : 'failed');
         }
     };
+    xhr.onerror = function() { console.warn('[Maze] Score submit network error'); };
 
-    xhr.onerror = function() {
-        console.warn('[Maze] Score submit network error');
-    };
-
-    xhr.send(JSON.stringify({
-        player: playerName,
-        time: time,
-        level: level
-    }));
+    xhr.send(JSON.stringify({ player: playerName, time: time, level: level }));
 }
 
 // ==================== Render Engine ====================
 
 function renderMaze() {
-    // Use canvas's CSS display size, capped for performance
-    var canvasSize = Math.min(window.innerWidth * 0.9, window.innerHeight * 0.85);
+    var canvasSize = Math.min(window.innerWidth * 0.9, window.innerHeight * 0.78);
     canvas.width = canvasSize;
     canvas.height = canvasSize;
     cellSize = Math.floor(canvasSize / Math.max(mazeWidth, mazeHeight));
@@ -178,107 +153,147 @@ function renderMaze() {
         for (var col = 0; col < mazeWidth; col++) {
             var x = offsetX + col * cellSize;
             var y = offsetY + row * cellSize;
-            if (maze[row][col] === 1) {
-                ctx.fillStyle = '#3a3a4a';
-            } else {
-                ctx.fillStyle = '#f0f0f0';
-            }
+            ctx.fillStyle = (maze[row][col] === 1) ? '#3a3a4a' : '#f0f0f0';
             ctx.fillRect(x, y, cellSize, cellSize);
         }
     }
 
-    // Draw end point (red)
+    // Draw end point (gold)
     var ex = offsetX + endCol * cellSize;
     var ey = offsetY + endRow * cellSize;
-    ctx.fillStyle = '#e94560';
+    ctx.fillStyle = '#e9c46a';
     ctx.fillRect(ex + 2, ey + 2, cellSize - 4, cellSize - 4);
 
-    // Draw player (green circle)
-    var px = offsetX + playerCol * cellSize + cellSize / 2;
-    var py = offsetY + playerRow * cellSize + cellSize / 2;
+    // Draw both players
+    drawPlayer(players[0]);
+    drawPlayer(players[1]);
+}
+
+function drawPlayer(p) {
+    var px = offsetX + p.col * cellSize + cellSize / 2;
+    var py = offsetY + p.row * cellSize + cellSize / 2;
     var pr = Math.max(4, cellSize * 0.35);
+
+    // Body
     ctx.beginPath();
     ctx.arc(px, py, pr, 0, Math.PI * 2);
-    ctx.fillStyle = '#4ecca3';
+    ctx.fillStyle = p.color;
     ctx.fill();
-    ctx.strokeStyle = '#2d8a6e';
+    ctx.strokeStyle = p.outline;
     ctx.lineWidth = 2;
     ctx.stroke();
+
+    // Label
+    if (cellSize >= 16) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold ' + Math.max(8, cellSize * 0.3) + 'px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(p.label, px, py);
+    }
+
+    // Checkmark if finished
+    if (p.finished) {
+        ctx.fillStyle = '#4ecca3';
+        ctx.font = Math.max(10, cellSize * 0.5) + 'px Arial';
+        ctx.fillText('V', px + cellSize * 0.35, py - cellSize * 0.35);
+    }
 }
 
 // ==================== Timer ====================
 
-function updateTimer() {
-    if (startTime !== null) {
-        elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+function updatePlayerTimer(p, timerEl) {
+    if (p.startTime !== null && !p.finished) {
+        p.elapsed = Math.floor((Date.now() - p.startTime) / 1000);
     }
-    timerEl.textContent = elapsedSeconds;
+    timerEl.textContent = p.elapsed;
 }
 
-function startTimer() {
-    if (gameStarted) return;
-    gameStarted = true;
-    startTime = Date.now();
-    timerInterval = setInterval(updateTimer, 200);
+function startPlayerTimer(p) {
+    if (p.started) return;
+    p.started = true;
+    p.startTime = Date.now();
+    p.interval = setInterval(function() { updatePlayerTimer(p, p.timerEl); }, 200);
 }
 
-function stopTimer() {
-    if (timerInterval) {
-        clearInterval(timerInterval);
-        timerInterval = null;
-    }
-    updateTimer();
+function stopPlayerTimer(p) {
+    if (p.interval) { clearInterval(p.interval); p.interval = null; }
+    updatePlayerTimer(p, p.timerEl);
 }
 
-function resetTimer() {
-    stopTimer();
-    startTime = null;
-    elapsedSeconds = 0;
-    gameStarted = false;
-    timerEl.textContent = '0';
+function resetPlayerTimer(p) {
+    stopPlayerTimer(p);
+    p.startTime = null;
+    p.elapsed = 0;
+    p.started = false;
+    p.finished = false;
+    p.timerEl.textContent = '0';
 }
 
 // ==================== Player Movement ====================
 
-function movePlayer(dRow, dCol) {
-    if (gameFinished) return;
+function movePlayer(pIndex, dRow, dCol) {
+    var p = players[pIndex];
+    if (p.finished) return; // Already done
 
-    var nr = playerRow + dRow;
-    var nc = playerCol + dCol;
+    var nr = p.row + dRow;
+    var nc = p.col + dCol;
 
     if (nr < 0 || nr >= mazeHeight || nc < 0 || nc >= mazeWidth) return;
-    if (maze[nr][nc] === 1) return;
+    if (maze[nr][nc] === 1) return; // Wall collision
 
-    playerRow = nr;
-    playerCol = nc;
+    p.row = nr;
+    p.col = nc;
     renderMaze();
 
-    if (playerRow === endRow && playerCol === endCol) {
-        onReachEnd();
+    // Check reach end
+    if (p.row === endRow && p.col === endCol) {
+        p.finished = true;
+        stopPlayerTimer(p);
+        renderMaze();
+        checkGameOver();
     }
 }
 
-function onReachEnd() {
-    gameFinished = true;
-    stopTimer();
+function checkGameOver() {
+    if (players[0].finished && players[1].finished) {
+        // Both finished, compare times
+        var t1 = players[0].elapsed;
+        var t2 = players[1].elapsed;
+        var msg;
+        if (t1 < t2) {
+            msg = players[0].name + ' wins! (' + t1 + 's vs ' + t2 + 's)';
+        } else if (t2 < t1) {
+            msg = players[1].name + ' wins! (' + t2 + 's vs ' + t1 + 's)';
+        } else {
+            msg = 'Tie! Both finished in ' + t1 + 's';
+        }
+        statusEl.textContent = msg;
+        console.log('[Maze] Game over:', msg);
 
-    var playerName = playerNameInput.value.trim() || 'Player';
-    alert('Clear! Player: ' + playerName + ' Time: ' + elapsedSeconds + 's');
+        // Submit both scores
+        var size = parseInt(levelSelect.value);
+        var levelMap = {11: 1, 21: 2, 31: 3};
+        var level = levelMap[size] || 1;
 
-    var size = parseInt(levelSelect.value);
-    var levelMap = {11: 1, 21: 2, 31: 3};
-    var level = levelMap[size] || 1;
-
-    submitScore(playerName, elapsedSeconds, level);
+        submitScore(players[0].name, t1, level);
+        submitScore(players[1].name, t2, level);
+    } else if (players[0].finished && !players[1].finished) {
+        statusEl.textContent = players[0].name + ' reached! Waiting for ' + players[1].name + '...';
+    } else if (!players[0].finished && players[1].finished) {
+        statusEl.textContent = players[1].name + ' reached! Waiting for ' + players[0].name + '...';
+    }
 }
 
 // ==================== Game Init & Reset ====================
 
 function setupGame() {
-    playerRow = 1;
-    playerCol = 1;
-    if (maze[playerRow] && maze[playerRow][playerCol] !== undefined) {
-        maze[playerRow][playerCol] = 0;
+    // Reset both players
+    players[0].row = 1; players[0].col = 1;
+    players[1].row = 1; players[1].col = 1;
+
+    if (maze[1] && maze[1][1] !== undefined) {
+        maze[1][1] = 0;
     }
 
     endRow = mazeHeight - 2;
@@ -289,47 +304,55 @@ function setupGame() {
         maze[endRow][endCol] = 0;
     }
 
-    gameFinished = false;
-    resetTimer();
+    // Reset timers
+    players[0].timerEl = timer1El;
+    players[1].timerEl = timer2El;
+    resetPlayerTimer(players[0]);
+    resetPlayerTimer(players[1]);
+
+    // Read names
+    var n1 = player1NameInput.value.trim();
+    var n2 = player2NameInput.value.trim();
+    players[0].name = n1 || 'Player 1';
+    players[1].name = n2 || 'Player 2';
+
+    statusEl.textContent = 'Go!';
 }
 
 function loadMaze() {
-    if (isLoading) {
-        console.log('[Maze] Already loading, skip');
-        return;
-    }
+    if (isLoading) { console.log('[Maze] Already loading, skip'); return; }
     isLoading = true;
 
     var size = parseInt(levelSelect.value);
 
-    // Step 1: Generate local maze immediately (always works)
+    // Step 1: Generate local maze immediately
     console.log('[Maze] Local generation, size:', size);
     maze = generateMaze(size, size);
     mazeWidth = size;
     mazeHeight = size;
     setupGame();
     renderMaze();
+    regenBtn.textContent = 'New Maze';
 
-    // Step 2: Try API in background for better maze
+    // Step 2: Try API for better maze
     fetchMazeFromAPI(size, size, function(data) {
         if (data && data.maze) {
             console.log('[Maze] Replacing with API maze');
             maze = data.maze;
             mazeWidth = data.width;
             mazeHeight = data.height;
+            // Keep both players at their current positions, just update maze
             setupGame();
             renderMaze();
         }
-        // Always restore button
         regenBtn.disabled = false;
         regenBtn.textContent = 'New Maze';
         isLoading = false;
     });
 
-    // Also set a fallback timeout in case callback never fires
+    // Fallback
     setTimeout(function() {
         if (isLoading) {
-            console.log('[Maze] Fallback restore');
             regenBtn.disabled = false;
             regenBtn.textContent = 'New Maze';
             isLoading = false;
@@ -340,37 +363,45 @@ function loadMaze() {
 // ==================== Event Listeners ====================
 
 document.addEventListener('keydown', function(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+
+    // Check if both already finished
+    if (players[0].finished && players[1].finished) return;
+
+    // ---- Player 1: WASD ----
+    var p1dRow = 0, p1dCol = 0;
+    switch (e.key.toLowerCase()) {
+        case 'w': p1dRow = -1; break;
+        case 's': p1dRow = 1;  break;
+        case 'a': p1dCol = -1; break;
+        case 'd': p1dCol = 1;  break;
+    }
+
+    if (p1dRow !== 0 || p1dCol !== 0) {
+        e.preventDefault();
+        if (!players[0].started) startPlayerTimer(players[0]);
+        movePlayer(0, p1dRow, p1dCol);
         return;
     }
 
-    if (gameFinished) return;
-
-    var dRow = 0, dCol = 0;
+    // ---- Player 2: Arrow keys ----
+    var p2dRow = 0, p2dCol = 0;
     switch (e.key) {
-        case 'ArrowUp':    dRow = -1; break;
-        case 'ArrowDown':  dRow = 1;  break;
-        case 'ArrowLeft':  dCol = -1; break;
-        case 'ArrowRight': dCol = 1;  break;
-        default: return;
+        case 'ArrowUp':    p2dRow = -1; break;
+        case 'ArrowDown':  p2dRow = 1;  break;
+        case 'ArrowLeft':  p2dCol = -1; break;
+        case 'ArrowRight': p2dCol = 1;  break;
     }
 
-    e.preventDefault();
-
-    if (!gameStarted) {
-        startTimer();
+    if (p2dRow !== 0 || p2dCol !== 0) {
+        e.preventDefault();
+        if (!players[1].started) startPlayerTimer(players[1]);
+        movePlayer(1, p2dRow, p2dCol);
     }
-
-    movePlayer(dRow, dCol);
 });
 
-regenBtn.addEventListener('click', function() {
-    loadMaze();
-});
-
-levelSelect.addEventListener('change', function() {
-    loadMaze();
-});
+regenBtn.addEventListener('click', function() { loadMaze(); });
+levelSelect.addEventListener('change', function() { loadMaze(); });
 
 // ==================== Start ====================
 loadMaze();
