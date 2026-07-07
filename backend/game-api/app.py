@@ -168,9 +168,9 @@ def get_levels():
 if __name__ == '__main__':
     # 启动时自动建表
     init_db()
-    print("✅ 游戏 API 已启动 (队员D)")
-    print("   - POST /api/score       提交成绩")
-    print("   - GET  /api/leaderboard 排行榜")
-    print("   - GET  /api/levels      关卡列表")
-    print("   端口: 5002")
+    print("[OK] Game API started (Player D)")
+    print("   - POST /api/score       Submit score")
+    print("   - GET  /api/leaderboard  Leaderboard")
+    print("   - GET  /api/levels       Level list")
+    print("   Port: 5002")
     app.run(port=5002, debug=True)
