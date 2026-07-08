@@ -156,11 +156,13 @@ def get_leaderboard():
 @app.route('/api/levels', methods=['GET'])
 def get_levels():
     """获取关卡列表 — 返回所有可用关卡"""
-    # 暂时写死 3 个关卡
+    # 暂时写死 4 个关卡
     levels = [
         {"id": 1, "name": "初级", "size": 11},
         {"id": 2, "name": "中级", "size": 21},
-        {"id": 3, "name": "高级", "size": 31}
+        {"id": 3, "name": "高级", "size": 31},
+        {"id": 4, "name": "地狱", "size": 41},
+        {"id": 5, "name": "天堂", "size": 51}
     ]
     return jsonify({"levels": levels})
 

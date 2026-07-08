@@ -490,7 +490,7 @@ function checkGameOver() {
 
         // Submit both scores
         var size = parseInt(levelSelect.value);
-        var levelMap = {11: 1, 21: 2, 31: 3};
+        var levelMap = {11: 1, 21: 2, 31: 3, 41: 4, 51: 5};
         var level = levelMap[size] || 1;
 
         submitScore(players[0].name, t1, level);
