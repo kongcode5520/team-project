@@ -1,10 +1,13 @@
 /* ========================================
-   Maze Game - Two-Player Mode (Player A)
+   Maze Game - Two-Player Mode v3.0
    Data structure: 2D array/matrix for maze grid
    0 = path, 1 = wall
 
    Player 1 = Green  (WASD keys)
    Player 2 = Blue   (Arrow keys)
+
+   v3.0: Monster units patrol three-way intersections.
+         Touching a monster resets player to spawn (1,1).
 
    API deps:
    - GET  /api/maze/generate  (Player C, port 5001)
@@ -53,6 +56,12 @@ var players = [
       started: false, finished: false, color: '#4e8cff', outline: '#2d5ecc',
       name: 'Player 2', label: 'P2' }
 ];
+
+// ==================== Monster State ====================
+// Data structure: Array of monster objects, each with position, patrol route, and movement state
+var monsters = [];
+var monsterInterval = null;
+var monsterSpeed = 600;  // Base movement interval in ms (adjusted by map size)
 
 // ==================== Maze Generation (Local DFS Stack) ====================
 
@@ -202,6 +211,306 @@ function startPotionAnimation() {
     }, 150);
 }
 
+// ==================== Monster System ====================
+
+/**
+ * Detect all three-way intersections in the current maze.
+ * A three-way intersection is a path cell (0) with exactly 3 adjacent path cells.
+ * @returns {Array<{row: number, col: number}>}
+ */
+function detectThreeWayIntersections() {
+    var intersections = [];
+    for (var r = 1; r < mazeHeight - 1; r++) {
+        for (var c = 1; c < mazeWidth - 1; c++) {
+            if (maze[r][c] !== 0) continue;
+            var pathCount = 0;
+            if (maze[r - 1][c] === 0) pathCount++;
+            if (maze[r + 1][c] === 0) pathCount++;
+            if (maze[r][c - 1] === 0) pathCount++;
+            if (maze[r][c + 1] === 0) pathCount++;
+            if (pathCount === 3) {
+                intersections.push({row: r, col: c});
+            }
+        }
+    }
+    return intersections;
+}
+
+/**
+ * Calculate how many monsters to spawn based on map size and available intersections.
+ * Larger maps → higher proportion of intersections get monsters.
+ * @param {number} totalIntersections - Total three-way intersections found
+ * @param {number} mapSize - Width/height of the maze
+ * @returns {number} Number of monsters to spawn
+ */
+function getMonsterCount(totalIntersections, mapSize) {
+    if (totalIntersections === 0) return 0;
+
+    var ratio, minMonsters, maxMonsters;
+    if (mapSize <= 11) {
+        ratio = 0.30; minMonsters = 1; maxMonsters = 2;
+    } else if (mapSize <= 21) {
+        ratio = 0.35; minMonsters = 1; maxMonsters = 4;
+    } else if (mapSize <= 31) {
+        ratio = 0.40; minMonsters = 2; maxMonsters = 6;
+    } else if (mapSize <= 41) {
+        ratio = 0.45; minMonsters = 3; maxMonsters = 8;
+    } else {
+        ratio = 0.50; minMonsters = 3; maxMonsters = 10;
+    }
+
+    var count = Math.floor(totalIntersections * ratio);
+    count = Math.max(minMonsters, Math.min(count, maxMonsters));
+    count = Math.min(count, totalIntersections);
+    return count;
+}
+
+/**
+ * Adjust monster movement speed based on map size.
+ * Larger maps → faster monsters (lower interval).
+ * @param {number} mapSize
+ * @returns {number} Movement interval in ms
+ */
+function getMonsterSpeed(mapSize) {
+    if (mapSize <= 11) return 800;
+    if (mapSize <= 21) return 650;
+    if (mapSize <= 31) return 550;
+    if (mapSize <= 41) return 450;
+    return 400;
+}
+
+/**
+ * Build a patrol route that cycles through all three branches of the intersection.
+ * The monster moves at most MAX_STEPS cells out from the intersection along each branch,
+ * then returns. This keeps patrols short and prevents permanent corridor blocking —
+ * the monster repeatedly passes through the intersection, giving players a chance to cross.
+ *
+ * Route pattern: [I, →1, →2, ←1, I, →(branch2)1, →2, ←1, I, →(branch3)1, →2, ←1, I]
+ *
+ * @param {{row: number, col: number}} intersection
+ * @returns {Array<{row: number, col: number}>} Ordered patrol route cells
+ */
+function buildPatrolRoute(intersection) {
+    var dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    var MAX_STEPS = 2;  // Maximum cells to move out from intersection per branch
+
+    // Collect valid exit directions from the intersection
+    var validDirs = [];
+    for (var d = 0; d < dirs.length; d++) {
+        var nr = intersection.row + dirs[d][0];
+        var nc = intersection.col + dirs[d][1];
+        if (nr >= 0 && nr < mazeHeight && nc >= 0 && nc < mazeWidth && maze[nr][nc] === 0) {
+            validDirs.push(dirs[d]);
+        }
+    }
+
+    if (validDirs.length === 0) {
+        return [{row: intersection.row, col: intersection.col}];
+    }
+
+    // Shuffle directions so monsters patrol branches in random order
+    for (var i = validDirs.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var tmp = validDirs[i];
+        validDirs[i] = validDirs[j];
+        validDirs[j] = tmp;
+    }
+
+    // Start the route at the intersection
+    var route = [{row: intersection.row, col: intersection.col}];
+
+    // For each of the 3 branches: walk out up to MAX_STEPS, then walk back to the intersection
+    for (var b = 0; b < validDirs.length; b++) {
+        var dr = validDirs[b][0];
+        var dc = validDirs[b][1];
+
+        // Collect up to MAX_STEPS reachable path cells along this direction
+        var branchCells = [];
+        var curR = intersection.row + dr;
+        var curC = intersection.col + dc;
+
+        for (var step = 0; step < MAX_STEPS; step++) {
+            // Stop at walls, out of bounds, or non-path cells
+            if (curR < 0 || curR >= mazeHeight || curC < 0 || curC >= mazeWidth || maze[curR][curC] !== 0) {
+                break;
+            }
+            branchCells.push({row: curR, col: curC});
+            curR += dr;
+            curC += dc;
+        }
+
+        if (branchCells.length === 0) continue;  // No reachable path in this direction
+
+        // Walk out along the branch
+        for (var k = 0; k < branchCells.length; k++) {
+            route.push(branchCells[k]);
+        }
+
+        // Walk back to the intersection (reverse order)
+        for (var k = branchCells.length - 1; k >= 0; k--) {
+            route.push(branchCells[k]);
+        }
+
+        // Return to intersection before heading out next branch
+        route.push({row: intersection.row, col: intersection.col});
+    }
+
+    return route;
+}
+
+/**
+ * Generate and place monsters on selected three-way intersections.
+ * Selection logic:
+ *   - Exclude intersections too close to start (1,1) or end point
+ *   - Spread monsters apart (minimum Manhattan distance between them)
+ *   - Count is proportional to map size
+ */
+function generateMonsters() {
+    monsters = [];
+
+    var intersections = detectThreeWayIntersections();
+    console.log('[Monster] Found ' + intersections.length + ' three-way intersections');
+
+    if (intersections.length === 0) return;
+
+    var targetCount = getMonsterCount(intersections.length, mazeWidth);
+    console.log('[Monster] Target count: ' + targetCount + ' (map size: ' + mazeWidth + ')');
+
+    // Filter: exclude intersections too close to start or end
+    var minDistFromKey = 4;  // Minimum Manhattan distance from start/end
+    var candidates = intersections.filter(function(inter) {
+        var dStart = Math.abs(inter.row - 1) + Math.abs(inter.col - 1);
+        var dEnd = Math.abs(inter.row - endRow) + Math.abs(inter.col - endCol);
+        return dStart >= minDistFromKey && dEnd >= minDistFromKey;
+    });
+
+    console.log('[Monster] Candidates after distance filter: ' + candidates.length);
+
+    // Shuffle candidates (Fisher-Yates)
+    for (var i = candidates.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var tmp = candidates[i];
+        candidates[i] = candidates[j];
+        candidates[j] = tmp;
+    }
+
+    // Greedy selection: pick intersections at least 3 cells apart
+    var selected = [];
+    var minMonsterDist = 3;
+    for (var i = 0; i < candidates.length && selected.length < targetCount; i++) {
+        var candidate = candidates[i];
+        var tooClose = false;
+        for (var s = 0; s < selected.length; s++) {
+            var dist = Math.abs(candidate.row - selected[s].row) +
+                       Math.abs(candidate.col - selected[s].col);
+            if (dist < minMonsterDist) {
+                tooClose = true;
+                break;
+            }
+        }
+        if (!tooClose) {
+            selected.push(candidate);
+        }
+    }
+
+    console.log('[Monster] Selected ' + selected.length + ' intersections for monsters');
+
+    // Create monster objects
+    for (var i = 0; i < selected.length; i++) {
+        var route = buildPatrolRoute(selected[i]);
+        // Start at a random position along the route
+        var startIdx = Math.floor(Math.random() * route.length);
+        monsters.push({
+            row: route[startIdx].row,
+            col: route[startIdx].col,
+            route: route,
+            routeIndex: startIdx,
+            direction: Math.random() < 0.5 ? 1 : -1,
+            color: '#e94560',
+            glowColor: '#ff0040'
+        });
+    }
+
+    console.log('[Monster] Generated ' + monsters.length + ' monsters');
+    for (var i = 0; i < monsters.length; i++) {
+        console.log('[Monster]   #' + (i + 1) + ' at (' + monsters[i].row + ',' + monsters[i].col +
+                    '), route length: ' + monsters[i].route.length);
+    }
+}
+
+/**
+ * Move all monsters one step along their patrol routes.
+ * Checks for player collisions after each move.
+ */
+function moveMonsters() {
+    if (monsters.length === 0) return;
+
+    for (var i = 0; i < monsters.length; i++) {
+        var m = monsters[i];
+        if (m.route.length <= 1) continue;  // Stationary monster
+
+        // Update route index
+        m.routeIndex += m.direction;
+
+        // Bounce at route endpoints
+        if (m.routeIndex >= m.route.length) {
+            m.routeIndex = m.route.length - 2;
+            m.direction = -1;
+        } else if (m.routeIndex < 0) {
+            m.routeIndex = 1;
+            m.direction = 1;
+        }
+
+        m.row = m.route[m.routeIndex].row;
+        m.col = m.route[m.routeIndex].col;
+
+        // Check collision with both players after monster moves
+        for (var p = 0; p < 2; p++) {
+            if (!players[p].finished &&
+                players[p].row === m.row &&
+                players[p].col === m.col) {
+                respawnPlayer(p);
+            }
+        }
+    }
+
+    renderMaze();
+}
+
+/**
+ * Respawn a player at the starting point after touching a monster.
+ * @param {number} pIndex - Player index (0 or 1)
+ */
+function respawnPlayer(pIndex) {
+    var p = players[pIndex];
+    p.row = 1;
+    p.col = 1;
+    statusEl.textContent = '💀 ' + p.name + ' was caught by a monster! Back to start!';
+    console.log('[Monster] ' + p.name + ' respawned at start');
+}
+
+/**
+ * Start the monster movement interval.
+ */
+function startMonsterMovement() {
+    stopMonsterMovement();
+    if (monsters.length === 0) return;
+
+    monsterSpeed = getMonsterSpeed(mazeWidth);
+    console.log('[Monster] Starting movement interval: ' + monsterSpeed + 'ms');
+    monsterInterval = setInterval(moveMonsters, monsterSpeed);
+}
+
+/**
+ * Stop the monster movement interval.
+ */
+function stopMonsterMovement() {
+    if (monsterInterval) {
+        clearInterval(monsterInterval);
+        monsterInterval = null;
+    }
+}
+
 // ==================== API Calls ====================
 
 function fetchMazeFromAPI(width, height, callback) {
@@ -309,6 +618,21 @@ function renderMaze() {
         ctx.fillRect(ex + 2, ey + 2, cellSize - 4, cellSize - 4);
     }
 
+    // ---- Draw monsters ----
+    for (var i = 0; i < monsters.length; i++) {
+        var m = monsters[i];
+        // Monster visible if: fog disabled, full vision active, or within fog range
+        var monsterVisible = !fogEnabled || hasFullVision;
+        if (!monsterVisible) {
+            var md1 = Math.max(Math.abs(m.row - players[0].row), Math.abs(m.col - players[0].col));
+            var md2 = Math.max(Math.abs(m.row - players[1].row), Math.abs(m.col - players[1].col));
+            monsterVisible = Math.min(md1, md2) <= fogRadius;
+        }
+        if (monsterVisible) {
+            drawMonster(m);
+        }
+    }
+
     // ---- Draw potion ----
     if (potion.active) {
         // Potion is visible: fog is off, OR full vision is active, OR within extended range
@@ -411,6 +735,71 @@ function drawPlayer(p) {
     }
 }
 
+function drawMonster(m) {
+    var mx = offsetX + m.col * cellSize + cellSize / 2;
+    var my = offsetY + m.row * cellSize + cellSize / 2;
+    var size = cellSize * 0.38;
+
+    // Glow effect
+    ctx.shadowColor = m.glowColor;
+    ctx.shadowBlur = size * 2;
+
+    // Body (diamond / bat shape)
+    ctx.fillStyle = m.color;
+    ctx.beginPath();
+    ctx.moveTo(mx, my - size);               // top
+    ctx.lineTo(mx + size * 0.65, my);        // right
+    ctx.lineTo(mx, my + size);               // bottom
+    ctx.lineTo(mx - size * 0.65, my);        // left
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#ff6b81';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Eyes
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
+    var eyeSize = Math.max(2, size * 0.22);
+    var eyeOffsetX = size * 0.22;
+    var eyeOffsetY = size * 0.15;
+
+    // Eye whites
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(mx - eyeOffsetX, my - eyeOffsetY, eyeSize, 0, Math.PI * 2);
+    ctx.arc(mx + eyeOffsetX, my - eyeOffsetY, eyeSize, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Pupils
+    ctx.fillStyle = '#1a1a2e';
+    ctx.beginPath();
+    ctx.arc(mx - eyeOffsetX, my - eyeOffsetY, eyeSize * 0.55, 0, Math.PI * 2);
+    ctx.arc(mx + eyeOffsetX, my - eyeOffsetY, eyeSize * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Mouth (small jagged line)
+    ctx.strokeStyle = '#1a1a2e';
+    ctx.lineWidth = Math.max(1, size * 0.15);
+    ctx.beginPath();
+    var mouthY = my + size * 0.25;
+    ctx.moveTo(mx - size * 0.2, mouthY);
+    ctx.lineTo(mx - size * 0.07, mouthY + size * 0.12);
+    ctx.lineTo(mx + size * 0.07, mouthY);
+    ctx.lineTo(mx + size * 0.2, mouthY + size * 0.12);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+
+    // Label text
+    if (cellSize >= 16) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold ' + Math.max(6, size * 0.35) + 'px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('M', mx, my + size * 0.55);
+    }
+}
+
 // ==================== Timer ====================
 
 function updatePlayerTimer(p, timerEl) {
@@ -459,6 +848,15 @@ function movePlayer(pIndex, dRow, dCol) {
     // Check potion collection
     if (potion.active && p.row === potion.row && p.col === potion.col) {
         collectPotion(p);
+    }
+
+    // Check monster collision
+    for (var i = 0; i < monsters.length; i++) {
+        if (p.row === monsters[i].row && p.col === monsters[i].col) {
+            respawnPlayer(pIndex);
+            renderMaze();
+            return;
+        }
     }
 
     renderMaze();
@@ -544,6 +942,11 @@ function setupGame() {
 
     // Place full vision potion
     placePotion();
+
+    // Generate monsters on three-way intersections
+    stopMonsterMovement();
+    generateMonsters();
+    startMonsterMovement();
 }
 
 function loadMaze() {
