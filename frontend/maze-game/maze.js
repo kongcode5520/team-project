@@ -38,6 +38,11 @@ var isLoading = false;
 var fogEnabled = true;
 var fogRadius = 3;  // Cells visible around each player
 
+// Full Map Vision Potion state
+var potion = { row: -1, col: -1, active: false };
+var fullVisionUntil = 0;  // timestamp (ms) when full vision expires, 0 = inactive
+var potionPulseAnim = null;  // animation interval handle
+
 // Two player states
 // Data structure: Objects with independent position/timer/finished state
 var players = [
@@ -95,6 +100,102 @@ function generateMaze(w, h) {
 
     grid[h - 2][w - 2] = 0;
     return grid;
+}
+
+// ==================== Potion Placement ====================
+
+function placePotion() {
+    // Cancel any active effect
+    potion.active = false;
+    fullVisionUntil = 0;
+
+    // Collect all valid path cells (not start, not end, not too close to either)
+    var pathCells = [];
+    for (var r = 0; r < mazeHeight; r++) {
+        for (var c = 0; c < mazeWidth; c++) {
+            if (maze[r][c] === 0 &&
+                !(r === 1 && c === 1) &&
+                !(r === endRow && c === endCol)) {
+
+                // Ensure potion is at least 5 steps (Manhattan) away from start and end
+                var dStart = Math.abs(r - 1) + Math.abs(c - 1);
+                var dEnd = Math.abs(r - endRow) + Math.abs(c - endCol);
+                if (dStart > 5 && dEnd > 5) {
+                    pathCells.push({row: r, col: c});
+                }
+            }
+        }
+    }
+
+    if (pathCells.length > 0) {
+        var cell = pathCells[Math.floor(Math.random() * pathCells.length)];
+        potion.row = cell.row;
+        potion.col = cell.col;
+        potion.active = true;
+        console.log('[Maze] Potion placed at (' + potion.row + ', ' + potion.col + ')');
+    } else {
+        console.log('[Maze] No suitable cell for potion');
+    }
+}
+
+function collectPotion(p) {
+    potion.active = false;
+    fullVisionUntil = Date.now() + 3000;  // 3 seconds of full vision
+    console.log('[Maze] ' + p.name + ' collected potion! Full vision for 3s');
+
+    // Show status message
+    if (!players[0].finished || !players[1].finished) {
+        statusEl.textContent = p.name + ' found a vision potion! 🧪';
+    }
+
+    // Show indicator
+    var indicator = document.getElementById('visionIndicator');
+    if (indicator) {
+        indicator.style.display = 'inline-block';
+        indicator.classList.add('active');
+    }
+
+    // If fog is disabled, potion has no visual effect (everything is already visible)
+    if (!fogEnabled) {
+        console.log('[Maze] Fog is off — potion has no effect while fog is disabled');
+    }
+
+    renderMaze();
+}
+
+function updateVisionIndicator() {
+    var indicator = document.getElementById('visionIndicator');
+    if (!indicator) return;
+
+    if (Date.now() < fullVisionUntil && fogEnabled) {
+        var remaining = ((fullVisionUntil - Date.now()) / 1000).toFixed(1);
+        indicator.textContent = '🧪 ' + remaining + 's';
+        indicator.style.display = 'inline-block';
+        indicator.classList.add('active');
+    } else {
+        indicator.style.display = 'none';
+        indicator.classList.remove('active');
+    }
+}
+
+function startPotionAnimation() {
+    if (potionPulseAnim) clearInterval(potionPulseAnim);
+    potionPulseAnim = setInterval(function() {
+        updateVisionIndicator();
+        // Re-render if potion is active (for pulse animation) or vision is active (countdown)
+        if (potion.active || Date.now() < fullVisionUntil) {
+            renderMaze();
+        }
+        // When vision just expired, one final render to restore fog
+        if (Date.now() >= fullVisionUntil && Date.now() - fullVisionUntil < 200) {
+            renderMaze();
+            updateVisionIndicator();
+            // Restore status text
+            if (statusEl.textContent.indexOf('🧪') === 0) {
+                statusEl.textContent = 'Go!';
+            }
+        }
+    }, 150);
 }
 
 // ==================== API Calls ====================
@@ -163,8 +264,11 @@ function renderMaze() {
         }
     }
 
+    // Check if full vision potion is active
+    var hasFullVision = Date.now() < fullVisionUntil;
+
     // ---- Fog of War overlay ----
-    if (fogEnabled) {
+    if (fogEnabled && !hasFullVision) {
         for (var row = 0; row < mazeHeight; row++) {
             for (var col = 0; col < mazeWidth; col++) {
                 // Calculate Chebyshev distance (square vision) to nearest player
@@ -194,16 +298,82 @@ function renderMaze() {
     var endDist1 = Math.max(Math.abs(endRow - players[0].row), Math.abs(endCol - players[0].col));
     var endDist2 = Math.max(Math.abs(endRow - players[1].row), Math.abs(endCol - players[1].col));
     var endMinDist = Math.min(endDist1, endDist2);
-    if (!fogEnabled || endMinDist <= fogRadius) {
+    if (!fogEnabled || hasFullVision || endMinDist <= fogRadius) {
         var ex = offsetX + endCol * cellSize;
         var ey = offsetY + endRow * cellSize;
         ctx.fillStyle = '#e9c46a';
         ctx.fillRect(ex + 2, ey + 2, cellSize - 4, cellSize - 4);
     }
 
+    // ---- Draw potion ----
+    if (potion.active) {
+        // Potion is visible: fog is off, OR full vision is active, OR within extended range
+        var potionVisible = !fogEnabled || hasFullVision;
+        if (!potionVisible) {
+            var pd1 = Math.max(Math.abs(potion.row - players[0].row), Math.abs(potion.col - players[0].col));
+            var pd2 = Math.max(Math.abs(potion.row - players[1].row), Math.abs(potion.col - players[1].col));
+            potionVisible = Math.min(pd1, pd2) <= fogRadius + 2;
+        }
+        if (potionVisible) {
+            drawPotion();
+        }
+    }
+
     // Draw both players (always visible)
     drawPlayer(players[0]);
     drawPlayer(players[1]);
+}
+
+function drawPotion() {
+    var px = offsetX + potion.col * cellSize + cellSize / 2;
+    var py = offsetY + potion.row * cellSize + cellSize / 2;
+    var size = cellSize * 0.4;
+
+    // Pulse effect
+    var pulse = Math.sin(Date.now() / 300) * 0.15 + 1;
+    var glowSize = size * pulse;
+
+    // Outer glow
+    ctx.shadowColor = '#e040fb';
+    ctx.shadowBlur = glowSize * 2;
+
+    // Potion body (diamond)
+    ctx.fillStyle = '#ce3fff';
+    ctx.beginPath();
+    ctx.moveTo(px, py - size);
+    ctx.lineTo(px + size * 0.55, py);
+    ctx.lineTo(px, py + size);
+    ctx.lineTo(px - size * 0.55, py);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#f0a0ff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Bottle neck
+    ctx.fillStyle = '#e0a0ff';
+    var neckW = size * 0.22;
+    var neckH = size * 0.35;
+    ctx.fillRect(px - neckW, py - size - neckH, neckW * 2, neckH);
+    ctx.strokeStyle = '#f0a0ff';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px - neckW, py - size - neckH, neckW * 2, neckH);
+
+    // Cork
+    ctx.fillStyle = '#c8a060';
+    ctx.fillRect(px - neckW * 0.8, py - size - neckH - size * 0.15, neckW * 1.6, size * 0.2);
+
+    // Inner sparkle / "?" mark
+    if (cellSize >= 16) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold ' + Math.max(7, size * 0.5) + 'px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('?', px, py);
+    }
+
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
 }
 
 function drawPlayer(p) {
@@ -281,6 +451,12 @@ function movePlayer(pIndex, dRow, dCol) {
 
     p.row = nr;
     p.col = nc;
+
+    // Check potion collection
+    if (potion.active && p.row === potion.row && p.col === potion.col) {
+        collectPotion(p);
+    }
+
     renderMaze();
 
     // Check reach end
@@ -354,6 +530,9 @@ function setupGame() {
     players[1].name = n2 || 'Player 2';
 
     statusEl.textContent = 'Go!';
+
+    // Place full vision potion
+    placePotion();
 }
 
 function loadMaze() {
@@ -370,6 +549,7 @@ function loadMaze() {
     setupGame();
     renderMaze();
     regenBtn.textContent = 'New Maze';
+    startPotionAnimation();
 
     // Step 2: Try API for better maze
     fetchMazeFromAPI(size, size, function(data) {
@@ -446,6 +626,9 @@ fogToggleBtn.addEventListener('click', function() {
         fogToggleBtn.textContent = '🌫 关闭迷雾';
         fogToggleBtn.classList.remove('fog-off');
     } else {
+        // Disabling fog also cancels any active potion full vision
+        fullVisionUntil = 0;
+        updateVisionIndicator();
         fogToggleBtn.textContent = '☀ 开启迷雾';
         fogToggleBtn.classList.add('fog-off');
     }

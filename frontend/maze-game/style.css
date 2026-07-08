@@ -202,6 +202,28 @@ canvas {
     background-color: #0f3460;
 }
 
+/* --- Vision Indicator --- */
+#visionIndicator {
+    padding: 6px 14px;
+    border-radius: 6px;
+    background-color: #4a1a6a;
+    color: #e040fb;
+    font-size: 14px;
+    font-weight: bold;
+    border: 2px solid #7b2dce;
+    transition: opacity 0.3s;
+    animation: none;
+}
+
+#visionIndicator.active {
+    animation: visionPulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes visionPulse {
+    from { box-shadow: 0 0 6px #ce3fff; }
+    to   { box-shadow: 0 0 16px #e040fb, 0 0 24px #ce3fff; }
+}
+
 /* --- Hint --- */
 .hint {
     font-size: 12px;
