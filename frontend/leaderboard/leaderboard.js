@@ -54,7 +54,9 @@ async function loadLevels() {
         levelsCache = [
             { id: 1, name: '初级', size: 11 },
             { id: 2, name: '中级', size: 21 },
-            { id: 3, name: '高级', size: 31 }
+            { id: 3, name: '高级', size: 31 },
+            { id: 4, name: '地狱', size: 41 },
+            { id: 5, name: '天堂', size: 51 }
         ];
         renderLevelTabs();
     }
