@@ -98,7 +98,11 @@ function generateMaze(w, h) {
         }
     }
 
-    grid[h - 2][w - 2] = 0;
+    // Ensure all three possible exit corners are paths
+    // (exit is randomly chosen in setupGame from these three, excluding spawn at 1,1)
+    grid[1][w - 2] = 0;         // top-right
+    grid[h - 2][1] = 0;         // bottom-left
+    grid[h - 2][w - 2] = 0;     // bottom-right
     return grid;
 }
 
@@ -509,10 +513,17 @@ function setupGame() {
         maze[1][1] = 0;
     }
 
-    endRow = mazeHeight - 2;
-    endCol = mazeWidth - 2;
-    if (endRow < 1) endRow = mazeHeight - 1;
-    if (endCol < 1) endCol = mazeWidth - 1;
+    // Randomly pick exit from three corners (excluding spawn at top-left 1,1)
+    var exitCorners = [
+        {row: 1, col: mazeWidth - 2},              // top-right
+        {row: mazeHeight - 2, col: 1},             // bottom-left
+        {row: mazeHeight - 2, col: mazeWidth - 2}  // bottom-right
+    ];
+    var chosen = exitCorners[Math.floor(Math.random() * exitCorners.length)];
+    endRow = chosen.row;
+    endCol = chosen.col;
+    if (endRow < 1) endRow = 1;
+    if (endCol < 1) endCol = 1;
     if (maze[endRow] && maze[endRow][endCol] !== undefined) {
         maze[endRow][endCol] = 0;
     }
