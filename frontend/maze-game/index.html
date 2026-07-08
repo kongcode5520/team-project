@@ -9,7 +9,7 @@
 <body>
     <!-- 导航栏 -->
     <nav class="navbar">
-        <span class="nav-title">Maze - Two Player</span>
+        <span class="nav-title">Maze - Two Player v2.1.1</span>
         <a href="../leaderboard/index.html" class="nav-link">Leaderboard</a>
     </nav>
 
@@ -45,6 +45,8 @@
                 </select>
             </div>
             <button id="regenerateBtn">New Maze</button>
+            <button id="fogToggleBtn">🌫 关闭迷雾</button>
+            <span id="visionIndicator" style="display:none;">🧪 3.0s</span>
         </div>
 
         <!-- 迷宫画布 -->
@@ -53,7 +55,7 @@
         </div>
 
         <!-- 操作提示 -->
-        <p class="hint">P1 Green = WASD &nbsp;|&nbsp; P2 Blue = Arrow Keys &nbsp;|&nbsp; Race to the gold square!</p>
+        <p class="hint">P1 Green = WASD &nbsp;|&nbsp; P2 Blue = Arrow Keys &nbsp;|&nbsp; 🧪 = Full Map Vision &nbsp;|&nbsp; Race to the gold square!</p>
     </div>
 
     <script src="maze.js"></script>

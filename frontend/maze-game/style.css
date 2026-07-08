@@ -174,6 +174,21 @@ button {
 button:hover { background-color: #c73652; }
 button:active { transform: scale(0.97); }
 
+/* --- Fog Toggle Button --- */
+#fogToggleBtn {
+    background-color: #5a4a8a;
+    transition: background-color 0.3s, color 0.3s;
+}
+#fogToggleBtn:hover {
+    background-color: #4a3a6a;
+}
+#fogToggleBtn.fog-off {
+    background-color: #3a5a3a;
+}
+#fogToggleBtn.fog-off:hover {
+    background-color: #2a4a2a;
+}
+
 /* --- Canvas --- */
 .canvas-wrapper {
     display: flex;
@@ -185,6 +200,28 @@ canvas {
     border: 2px solid #533483;
     border-radius: 6px;
     background-color: #0f3460;
+}
+
+/* --- Vision Indicator --- */
+#visionIndicator {
+    padding: 6px 14px;
+    border-radius: 6px;
+    background-color: #4a1a6a;
+    color: #e040fb;
+    font-size: 14px;
+    font-weight: bold;
+    border: 2px solid #7b2dce;
+    transition: opacity 0.3s;
+    animation: none;
+}
+
+#visionIndicator.active {
+    animation: visionPulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes visionPulse {
+    from { box-shadow: 0 0 6px #ce3fff; }
+    to   { box-shadow: 0 0 16px #e040fb, 0 0 24px #ce3fff; }
 }
 
 /* --- Hint --- */
