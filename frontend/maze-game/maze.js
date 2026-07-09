@@ -91,7 +91,7 @@ var players = [
 // When full, the player is randomly teleported nearby (max 5 units)
 // and shown "你在暴风雪中迷失方向". The bar then resets.
 var coldModeEnabled = false;
-var coldMaxProgress = 18000;   // 18 seconds for the bar to fill completely
+var coldMaxProgress = 22000;   // 22 seconds for the bar to fill completely
 var coldProgress = [0, 0];     // Per-player progress in ms: [P1, P2]
 var coldPenaltyCount = [0, 0]; // v4.1: Per-player count of cold bar fills [P1, P2]
                                // 0→next=迷失方向, 1→next=雪怪回城, 2→next=冻死重置
