@@ -1,11 +1,12 @@
 /* ========================================
-   Maze Game - Two-Player Mode v3.0
+   Maze Game - Two-Player Mode v3.1
    Data structure: 2D array/matrix for maze grid
    0 = path, 1 = wall
 
    Player 1 = Green  (WASD keys)
    Player 2 = Blue   (Arrow keys)
 
+   v3.1: Toggle button to enable/disable monster generation.
    v3.0: Monster units patrol three-way intersections.
          Touching a monster resets player to spawn (1,1).
 
@@ -24,6 +25,7 @@ var player2NameInput = document.getElementById('player2Name');
 var levelSelect = document.getElementById('levelSelect');
 var regenBtn = document.getElementById('regenerateBtn');
 var fogToggleBtn = document.getElementById('fogToggleBtn');
+var monsterToggleBtn = document.getElementById('monsterToggleBtn');
 var statusEl = document.getElementById('gameStatus');
 
 // ==================== Game State ====================
@@ -40,6 +42,9 @@ var isLoading = false;
 // Fog of War state
 var fogEnabled = true;
 var fogRadius = 3;  // Cells visible around each player
+
+// Monster toggle state
+var monstersEnabled = true;
 
 // Full Map Vision Potion state
 var potion = { row: -1, col: -1, active: false };
@@ -943,10 +948,13 @@ function setupGame() {
     // Place full vision potion
     placePotion();
 
-    // Generate monsters on three-way intersections
+    // Generate monsters on three-way intersections (only if enabled)
     stopMonsterMovement();
-    generateMonsters();
-    startMonsterMovement();
+    monsters = [];
+    if (monstersEnabled) {
+        generateMonsters();
+        startMonsterMovement();
+    }
 }
 
 function loadMaze() {
@@ -1045,6 +1053,26 @@ fogToggleBtn.addEventListener('click', function() {
         updateVisionIndicator();
         fogToggleBtn.textContent = '☀ 开启迷雾';
         fogToggleBtn.classList.add('fog-off');
+    }
+    renderMaze();
+});
+
+monsterToggleBtn.addEventListener('click', function() {
+    monstersEnabled = !monstersEnabled;
+    if (monstersEnabled) {
+        monsterToggleBtn.textContent = '👾 关闭怪物';
+        monsterToggleBtn.classList.remove('monster-off');
+        // Regenerate monsters on current maze
+        generateMonsters();
+        startMonsterMovement();
+        statusEl.textContent = '👾 Monsters enabled!';
+    } else {
+        monsterToggleBtn.textContent = '☮ 开启怪物';
+        monsterToggleBtn.classList.add('monster-off');
+        // Remove all monsters
+        stopMonsterMovement();
+        monsters = [];
+        statusEl.textContent = '☮ Monsters disabled!';
     }
     renderMaze();
 });

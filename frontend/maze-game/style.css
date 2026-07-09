@@ -189,6 +189,21 @@ button:active { transform: scale(0.97); }
     background-color: #2a4a2a;
 }
 
+/* --- Monster Toggle Button --- */
+#monsterToggleBtn {
+    background-color: #8a3a4a;
+    transition: background-color 0.3s, color 0.3s;
+}
+#monsterToggleBtn:hover {
+    background-color: #6a2a3a;
+}
+#monsterToggleBtn.monster-off {
+    background-color: #3a5a5a;
+}
+#monsterToggleBtn.monster-off:hover {
+    background-color: #2a4a4a;
+}
+
 /* --- Canvas --- */
 .canvas-wrapper {
     display: flex;
