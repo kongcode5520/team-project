@@ -980,6 +980,29 @@ function submitScore(playerName, time, level) {
 
 // ==================== Render Engine ====================
 
+/**
+ * Lighten a hex color string by a given ratio.
+ * @param {string} hex - Hex color like '#4ecca3'
+ * @param {number} ratio - 0 to 1, how much to lighten
+ * @returns {string} Lightened rgb/rgba color
+ */
+function lightenColor(hex, ratio) {
+    if (hex[0] === '#') {
+        var r = parseInt(hex.substr(1, 2), 16);
+        var g = parseInt(hex.substr(3, 2), 16);
+        var b = parseInt(hex.substr(5, 2), 16);
+    } else {
+        // Assume rgb/rgba format — extract numbers
+        var match = hex.match(/[\d.]+/g);
+        if (!match || match.length < 3) return hex;
+        var r = parseInt(match[0]), g = parseInt(match[1]), b = parseInt(match[2]);
+    }
+    r = Math.min(255, Math.floor(r + (255 - r) * ratio));
+    g = Math.min(255, Math.floor(g + (255 - g) * ratio));
+    b = Math.min(255, Math.floor(b + (255 - b) * ratio));
+    return 'rgb(' + r + ', ' + g + ', ' + b + ')';
+}
+
 function renderMaze() {
     var canvasSize = Math.min(window.innerWidth * 0.9, window.innerHeight * 0.78);
     canvas.width = canvasSize;
@@ -990,13 +1013,63 @@ function renderMaze() {
 
     ctx.clearRect(0, 0, canvasSize, canvasSize);
 
-    // Draw grid
+    // Draw canvas background radial gradient (dark center glow)
+    var bgGrad = ctx.createRadialGradient(canvasSize / 2, canvasSize / 2, canvasSize * 0.05,
+                                           canvasSize / 2, canvasSize / 2, canvasSize * 0.72);
+    bgGrad.addColorStop(0, '#1a1a3a');
+    bgGrad.addColorStop(0.5, '#12122a');
+    bgGrad.addColorStop(1, '#080818');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, canvasSize, canvasSize);
+
+    // Draw grid cells with enhanced color palette
     for (var row = 0; row < mazeHeight; row++) {
         for (var col = 0; col < mazeWidth; col++) {
             var x = offsetX + col * cellSize;
             var y = offsetY + row * cellSize;
-            ctx.fillStyle = (maze[row][col] === 1) ? '#3a3a4a' : '#f0f0f0';
-            ctx.fillRect(x, y, cellSize, cellSize);
+            if (maze[row][col] === 1) {
+                // Wall: deep blue-purple with subtle top-left highlight
+                ctx.fillStyle = '#3a3a5a';
+                ctx.fillRect(x, y, cellSize, cellSize);
+                // Subtle 3D bevel: lighter top-left edge
+                if (cellSize >= 6) {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+                    ctx.fillRect(x, y, cellSize, 1);
+                    ctx.fillRect(x, y, 1, cellSize);
+                    // Darker bottom-right edge
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+                    ctx.fillRect(x, y + cellSize - 1, cellSize, 1);
+                    ctx.fillRect(x + cellSize - 1, y, 1, cellSize);
+                }
+            } else {
+                // Path: warm cream tone with subtle variation
+                var pathVariation = ((row * 7 + col * 13) % 10) / 100;  // subtle per-cell variation
+                var r = Math.floor(232 + pathVariation * 8);
+                var g = Math.floor(224 + pathVariation * 6);
+                var b = Math.floor(208 + pathVariation * 5);
+                ctx.fillStyle = 'rgb(' + r + ', ' + g + ', ' + b + ')';
+                ctx.fillRect(x, y, cellSize, cellSize);
+            }
+        }
+    }
+
+    // Draw subtle grid lines for depth
+    if (cellSize >= 6) {
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.06)';
+        ctx.lineWidth = 0.5;
+        for (var row = 0; row <= mazeHeight; row++) {
+            var gy = offsetY + row * cellSize;
+            ctx.beginPath();
+            ctx.moveTo(offsetX, gy);
+            ctx.lineTo(offsetX + mazeWidth * cellSize, gy);
+            ctx.stroke();
+        }
+        for (var col = 0; col <= mazeWidth; col++) {
+            var gx = offsetX + col * cellSize;
+            ctx.beginPath();
+            ctx.moveTo(gx, offsetY);
+            ctx.lineTo(gx, offsetY + mazeHeight * cellSize);
+            ctx.stroke();
         }
     }
 
@@ -1018,16 +1091,22 @@ function renderMaze() {
                 }
 
                 if (minDist > fogRadius) {
-                    // Full fog — completely hidden, fully opaque
+                    // Full fog — completely hidden, fully opaque with subtle bluish tint
                     var x = offsetX + col * cellSize;
                     var y = offsetY + row * cellSize;
-                    ctx.fillStyle = '#0a0a1e';
+                    ctx.fillStyle = '#080820';
                     ctx.fillRect(x, y, cellSize, cellSize);
                 } else if (minDist === fogRadius) {
                     // Edge fade — heavy mist, barely visible
                     var x = offsetX + col * cellSize;
                     var y = offsetY + row * cellSize;
-                    ctx.fillStyle = 'rgba(10, 10, 30, 0.75)';
+                    ctx.fillStyle = 'rgba(8, 8, 28, 0.68)';
+                    ctx.fillRect(x, y, cellSize, cellSize);
+                } else if (minDist === fogRadius - 1 && fogRadius > 1) {
+                    // Soft edge — light mist for smoother transition
+                    var x = offsetX + col * cellSize;
+                    var y = offsetY + row * cellSize;
+                    ctx.fillStyle = 'rgba(10, 10, 30, 0.18)';
                     ctx.fillRect(x, y, cellSize, cellSize);
                 }
                 // dist < fogRadius: no overlay, cell is fully visible
@@ -1047,8 +1126,35 @@ function renderMaze() {
     if (!fogEnabled || hasFullVision || endMinDist <= fogRadius) {
         var ex = offsetX + endCol * cellSize;
         var ey = offsetY + endRow * cellSize;
-        ctx.fillStyle = '#e9c46a';
+        var eCenterX = ex + cellSize / 2;
+        var eCenterY = ey + cellSize / 2;
+
+        // Radial glow under end point
+        var endPulse = Math.sin(Date.now() / 500) * 0.3 + 0.7;
+        var endGlow = ctx.createRadialGradient(eCenterX, eCenterY, cellSize * 0.25,
+                                                eCenterX, eCenterY, cellSize * 1.6);
+        endGlow.addColorStop(0, 'rgba(233, 196, 106, ' + (0.7 * endPulse) + ')');
+        endGlow.addColorStop(0.5, 'rgba(233, 196, 106, ' + (0.25 * endPulse) + ')');
+        endGlow.addColorStop(1, 'rgba(233, 196, 106, 0)');
+        ctx.fillStyle = endGlow;
+        ctx.fillRect(ex - cellSize * 0.6, ey - cellSize * 0.6, cellSize * 2.2, cellSize * 2.2);
+
+        // Gold exit square with inner gradient
+        var innerGrad = ctx.createLinearGradient(ex, ey, ex + cellSize, ey + cellSize);
+        innerGrad.addColorStop(0, '#f5d88a');
+        innerGrad.addColorStop(0.4, '#e9c46a');
+        innerGrad.addColorStop(1, '#c9a040');
+        ctx.fillStyle = innerGrad;
         ctx.fillRect(ex + 2, ey + 2, cellSize - 4, cellSize - 4);
+
+        // Inner highlight
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.fillRect(ex + 3, ey + 3, cellSize - 6, Math.floor((cellSize - 6) * 0.35));
+
+        // Gold sparkle border
+        ctx.strokeStyle = 'rgba(255, 215, 0, ' + (0.5 * endPulse) + ')';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(ex + 2, ey + 2, cellSize - 4, cellSize - 4);
     }
 
     // ---- Draw monsters ----
@@ -1238,10 +1344,27 @@ function drawPlayer(p) {
     var py = offsetY + p.row * cellSize + cellSize / 2;
     var pr = Math.max(4, cellSize * 0.35);
 
-    // Body
+    // Radial glow under player
+    var glowColor = lightenColor(p.color, 0.3);
+    // Convert to rgba for glow
+    var glowRgba = glowColor.replace('rgb(', 'rgba(').replace(')', ', 0.45)');
+    var glowRgbaMid = glowColor.replace('rgb(', 'rgba(').replace(')', ', 0.12)');
+    var glowGrad = ctx.createRadialGradient(px, py, pr * 0.3, px, py, pr * 2.2);
+    glowGrad.addColorStop(0, glowRgba);
+    glowGrad.addColorStop(0.5, glowRgbaMid);
+    glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(px, py, pr * 2.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body with subtle gradient
+    var bodyGrad = ctx.createRadialGradient(px - pr * 0.3, py - pr * 0.3, pr * 0.1, px, py, pr);
+    bodyGrad.addColorStop(0, lightenColor(p.color, 0.25));
+    bodyGrad.addColorStop(1, p.color);
     ctx.beginPath();
     ctx.arc(px, py, pr, 0, Math.PI * 2);
-    ctx.fillStyle = p.color;
+    ctx.fillStyle = bodyGrad;
     ctx.fill();
     ctx.strokeStyle = p.outline;
     ctx.lineWidth = 2;
@@ -1269,9 +1392,19 @@ function drawMonster(m) {
     var my = offsetY + m.row * cellSize + cellSize / 2;
     var size = cellSize * 0.38;
 
+    // Radial glow under monster
+    var monGlow = ctx.createRadialGradient(mx, my, size * 0.2, mx, my, size * 2.5);
+    monGlow.addColorStop(0, 'rgba(233, 69, 96, 0.3)');
+    monGlow.addColorStop(0.5, 'rgba(233, 69, 96, 0.08)');
+    monGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = monGlow;
+    ctx.beginPath();
+    ctx.arc(mx, my, size * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
     // Glow effect
     ctx.shadowColor = m.glowColor;
-    ctx.shadowBlur = size * 2;
+    ctx.shadowBlur = size * 2.5;
 
     // Body (diamond / bat shape)
     ctx.fillStyle = m.color;
@@ -2003,7 +2136,12 @@ function setupGame() {
 
     // Place pickups
     placePotions();
-    placeFlames();
+    // Flames only generate when cold mode is active
+    if (coldModeEnabled) {
+        placeFlames();
+    } else {
+        flames = [];
+    }
 
     // Generate monsters on three-way intersections (only if enabled)
     stopMonsterMovement();
@@ -2158,12 +2296,14 @@ coldToggleBtn.addEventListener('click', function() {
     if (coldModeEnabled) {
         coldToggleBtn.textContent = '❄️ 关闭极寒';
         coldToggleBtn.classList.add('cold-on');
+        placeFlames();
         startColdMode();
-        statusEl.textContent = '❄️ 极寒模式已开启！';
+        statusEl.textContent = '❄️ 极寒模式已开启！🔥 火苗已生成';
     } else {
         coldToggleBtn.textContent = '❄️ 极寒模式';
         coldToggleBtn.classList.remove('cold-on');
         stopColdMode();
+        flames = [];
         statusEl.textContent = 'Go!';
     }
     renderMaze();
