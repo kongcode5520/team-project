@@ -1,11 +1,12 @@
 /* ========================================
-   Maze Game - Two-Player Mode v4.0.1
+   Maze Game - Two-Player Mode v4.0.2
    Data structure: 2D array/matrix for maze grid
    0 = path, 1 = wall
 
    Player 1 = Green  (WASD keys)
    Player 2 = Blue   (Arrow keys)
 
+   v4.0.2: Potions tied to fog toggle — fog off = no potions generated.
    v4.0.1: Enhanced lost-direction notification — large prominent
            canvas overlay with frost effects, supports multi-player display.
    v4.0: Extreme Cold Mode — cold progress bar fills over time;
@@ -277,6 +278,12 @@ function placePotions() {
     // Cancel any active effect
     potions = [];
     fullVisionUntil = 0;
+
+    // v4.0.2: Potions only exist when fog is enabled — no fog, no potions
+    if (!fogEnabled) {
+        console.log('[Maze] Fog disabled — skipping potion placement');
+        return;
+    }
 
     var count = getPotionCount(mazeWidth);
 
@@ -1703,12 +1710,17 @@ fogToggleBtn.addEventListener('click', function() {
     if (fogEnabled) {
         fogToggleBtn.textContent = '🌫 关闭迷雾';
         fogToggleBtn.classList.remove('fog-off');
+        // v4.0.2: Turning fog ON regenerates potions
+        placePotions();
+        statusEl.textContent = '🌫 Fog enabled — potions appear!';
     } else {
-        // Disabling fog also cancels any active potion full vision
+        // Disabling fog also cancels any active potion full vision and clears all potions
         fullVisionUntil = 0;
+        potions = [];
         updateVisionIndicator();
         fogToggleBtn.textContent = '☀ 开启迷雾';
         fogToggleBtn.classList.add('fog-off');
+        statusEl.textContent = '☀ Fog disabled — potions removed!';
     }
     renderMaze();
 });
