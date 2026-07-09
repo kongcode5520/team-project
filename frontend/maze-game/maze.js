@@ -1,11 +1,13 @@
 /* ========================================
-   Maze Game - Two-Player Mode v4.1
+   Maze Game - Two-Player Mode v4.2
    Data structure: 2D array/matrix for maze grid
    0 = path, 1 = wall
 
    Player 1 = Green  (WASD keys)
    Player 2 = Blue   (Arrow keys)
 
+   v4.2: Flame pickups scattered across the map — collecting one
+         reduces the cold progress bar. Flame count scales with map size.
    v4.1: Three-tier cold penalty — 1st=迷失方向(teleport nearby),
          2nd=雪怪赶跑(teleport to spawn), 3rd=冻死(reset map).
    v4.0.2: Potions tied to fog toggle — fog off = no potions generated.
@@ -69,6 +71,9 @@ var monstersEnabled = true;
 var potions = [];  // Array of {row, col, active}
 var fullVisionUntil = 0;  // timestamp (ms) when full vision expires, 0 = inactive
 var potionPulseAnim = null;  // animation interval handle
+
+// v4.2: Flame pickups — scattered across the map, reduce cold progress on pickup
+var flames = [];  // Array of {row, col}
 
 // Two player states
 // Data structure: Objects with independent position/timer/finished state
@@ -272,17 +277,22 @@ function applyColdPenalty(pIndex) {
 
         // Push death notification for all active non-finished players
         // (respect twoPlayerMode: skip P2 in single-player)
+        // The player who triggered death gets the standard message;
+        // surviving players get a "companion died" message.
         var deadCount = 0;
         for (var pi = 0; pi < 2; pi++) {
             if (!twoPlayerMode && pi === 1) continue;  // P2 inactive in single-player
             if (!players[pi].finished) {
+                var isTrigger = (pi === pIndex);
                 lostNotifications.push({
                     pIndex: pi,
                     timestamp: Date.now(),
                     duration: 5000,
-                    tier: 2
+                    tier: 2,
+                    msg: isTrigger ? '被冻死了！重置地图！'
+                                   : '你的同伴死去，孤独在暴雪中侵蚀了你'
                 });
-                setPlayerColdStatus(pi, '💀 被冻死了');
+                setPlayerColdStatus(pi, isTrigger ? '💀 被冻死了' : '💀 同伴已死');
                 deadCount++;
             }
         }
@@ -483,12 +493,133 @@ function updateVisionIndicator() {
     }
 }
 
+// ==================== Flame Pickups (v4.2) ====================
+
+/**
+ * Returns number of flames based on map size.
+ * Larger maps get more flames. Counting roughly correlates with map area.
+ */
+function getFlameCount(mapSize) {
+    if (mapSize <= 11) return 5;    // Easy
+    if (mapSize <= 21) return 12;   // Medium
+    if (mapSize <= 31) return 22;   // Hard
+    if (mapSize <= 41) return 32;   // Hell
+    return 44;                       // Heaven (51)
+}
+
+/**
+ * Place flames evenly across the map using a grid-based approach.
+ * Divide the maze into a grid of regions and place one flame per region
+ * at a random valid path cell within that region.
+ * Excludes start (1,1), end, and cells too close to them.
+ */
+function placeFlames() {
+    flames = [];
+
+    var targetCount = getFlameCount(mazeWidth);
+    console.log('[Flame] Target count: ' + targetCount + ' (map size: ' + mazeWidth + ')');
+
+    // Collect all valid path cells
+    var pathCells = [];
+    for (var r = 0; r < mazeHeight; r++) {
+        for (var c = 0; c < mazeWidth; c++) {
+            if (maze[r][c] !== 0) continue;
+            // Exclude start and end
+            if (r === 1 && c === 1) continue;
+            if (r === endRow && c === endCol) continue;
+            // Exclude cells too close to start or end (2 cells minimum)
+            var dStart = Math.abs(r - 1) + Math.abs(c - 1);
+            var dEnd = Math.abs(r - endRow) + Math.abs(c - endCol);
+            if (dStart <= 2 || dEnd <= 2) continue;
+            pathCells.push({row: r, col: c});
+        }
+    }
+
+    if (pathCells.length === 0) {
+        console.log('[Flame] No suitable cells');
+        return;
+    }
+
+    // Grid-based even distribution: divide maze into a grid of regions.
+    // Aim for roughly targetCount regions, create a square-ish grid.
+    var gridCols = Math.max(1, Math.round(Math.sqrt(targetCount * (mazeWidth / mazeHeight))));
+    var gridRows = Math.max(1, Math.round(targetCount / gridCols));
+
+    // Adjust grid dimensions to fit within maze
+    gridCols = Math.min(gridCols, targetCount);
+    gridRows = Math.ceil(targetCount / gridCols);
+
+    var regionW = Math.floor(mazeWidth / gridCols);
+    var regionH = Math.floor(mazeHeight / gridRows);
+
+    // Collect path cells per region
+    var regions = [];
+    for (var gr = 0; gr < gridRows; gr++) {
+        for (var gc = 0; gc < gridCols; gc++) {
+            var rStart = gr * regionH;
+            var rEnd = (gr === gridRows - 1) ? mazeHeight : (gr + 1) * regionH;
+            var cStart = gc * regionW;
+            var cEnd = (gc === gridCols - 1) ? mazeWidth : (gc + 1) * regionW;
+
+            var regionCells = [];
+            for (var r = rStart; r < rEnd; r++) {
+                for (var c = cStart; c < cEnd; c++) {
+                    if (maze[r][c] === 0 &&
+                        !(r === 1 && c === 1) &&
+                        !(r === endRow && c === endCol)) {
+                        var ds = Math.abs(r - 1) + Math.abs(c - 1);
+                        var de = Math.abs(r - endRow) + Math.abs(c - endCol);
+                        if (ds > 2 && de > 2) {
+                            regionCells.push({row: r, col: c});
+                        }
+                    }
+                }
+            }
+            if (regionCells.length > 0) {
+                regions.push(regionCells);
+            }
+        }
+    }
+
+    // Pick one random cell from each region (up to targetCount regions)
+    for (var i = regions.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var tmp = regions[i];
+        regions[i] = regions[j];
+        regions[j] = tmp;
+    }
+
+    for (var i = 0; i < regions.length && flames.length < targetCount; i++) {
+        var cells = regions[i];
+        var pick = cells[Math.floor(Math.random() * cells.length)];
+        flames.push({row: pick.row, col: pick.col});
+    }
+
+    console.log('[Flame] Placed ' + flames.length + ' flames across ' + gridRows + 'x' +
+                gridCols + ' grid');
+}
+
+/**
+ * Collect a flame: reduce the player's cold progress bar.
+ * @param {number} pIndex - Player index (0 or 1)
+ * @param {number} flameIdx - Index of the flame in the flames array
+ */
+function collectFlame(pIndex, flameIdx) {
+    var heatAmount = 6000;  // Reduce cold bar by 6000ms (~33% of a full bar)
+    coldProgress[pIndex] = Math.max(0, coldProgress[pIndex] - heatAmount);
+    var p = players[pIndex];
+    flames.splice(flameIdx, 1);
+    console.log('[Flame] ' + p.name + ' collected a flame! Cold reduced. (' + flames.length + ' remaining)');
+    statusEl.textContent = '🔥 ' + p.name + ' collected a flame! Cold reduced!';
+    renderMaze();
+}
+
 function startPotionAnimation() {
     if (potionPulseAnim) clearInterval(potionPulseAnim);
     potionPulseAnim = setInterval(function() {
         updateVisionIndicator();
-        // Re-render if potions exist (for pulse animation) or vision is active (countdown)
-        if (potions.length > 0 || Date.now() < fullVisionUntil) {
+        // Re-render if pickups exist (for pulse/flicker animations) or vision is active
+        if (potions.length > 0 || flames.length > 0 || Date.now() < fullVisionUntil) {
             renderMaze();
         }
         // When vision just expired, one final render to restore fog
@@ -958,6 +1089,24 @@ function renderMaze() {
         }
     }
 
+    // ---- Draw flames (v4.2) ----
+    for (var fi = 0; fi < flames.length; fi++) {
+        var fl = flames[fi];
+        var flameVisible = !fogEnabled || hasFullVision;
+        if (!flameVisible) {
+            var fd1 = Math.max(Math.abs(fl.row - players[0].row), Math.abs(fl.col - players[0].col));
+            if (twoPlayerMode) {
+                var fd2 = Math.max(Math.abs(fl.row - players[1].row), Math.abs(fl.col - players[1].col));
+                flameVisible = Math.min(fd1, fd2) <= fogRadius;
+            } else {
+                flameVisible = fd1 <= fogRadius;
+            }
+        }
+        if (flameVisible) {
+            drawFlame(fl);
+        }
+    }
+
     // Draw players (always visible)
     drawPlayer(players[0]);
     if (twoPlayerMode) {
@@ -1021,6 +1170,67 @@ function drawPotion(p) {
 
     ctx.shadowBlur = 0;
     ctx.shadowColor = 'transparent';
+}
+
+function drawFlame(f) {
+    var fx = offsetX + f.col * cellSize + cellSize / 2;
+    var fy = offsetY + f.row * cellSize + cellSize / 2;
+    var size = cellSize * 0.36;
+
+    // Flicker effect
+    var flicker = Math.sin(Date.now() / 120 + f.row * 3 + f.col * 7) * 0.12 +
+                  Math.sin(Date.now() / 200 + f.row * 5) * 0.08 + 1;
+
+    // Outer glow
+    ctx.shadowColor = '#ff6600';
+    ctx.shadowBlur = size * flicker * 2.5;
+
+    // Flame body — 3-layer teardrop shape
+    // Outer flame (red)
+    ctx.fillStyle = '#e04020';
+    ctx.beginPath();
+    ctx.moveTo(fx, fy - size * flicker);              // top tip
+    ctx.quadraticCurveTo(fx + size * 0.55, fy - size * 0.2, fx + size * 0.5, fy + size * 0.5);  // right curve
+    ctx.quadraticCurveTo(fx, fy + size * 0.8, fx, fy + size * 0.5); // bottom curve
+    ctx.quadraticCurveTo(fx - size * 0.5, fy + size * 0.5, fx - size * 0.55, fy - size * 0.2);  // left curve
+    ctx.closePath();
+    ctx.fill();
+
+    // Middle flame (orange)
+    ctx.fillStyle = '#ff8800';
+    ctx.beginPath();
+    var midSize = size * 0.7;
+    ctx.moveTo(fx, fy - midSize * flicker);
+    ctx.quadraticCurveTo(fx + midSize * 0.45, fy - midSize * 0.1, fx + midSize * 0.4, fy + midSize * 0.35);
+    ctx.quadraticCurveTo(fx, fy + midSize * 0.55, fx, fy + midSize * 0.4);
+    ctx.quadraticCurveTo(fx - midSize * 0.4, fy + midSize * 0.35, fx - midSize * 0.45, fy - midSize * 0.1);
+    ctx.closePath();
+    ctx.fill();
+
+    // Inner flame (yellow)
+    ctx.fillStyle = '#ffcc00';
+    ctx.beginPath();
+    var inSize = size * 0.35;
+    ctx.moveTo(fx, fy - inSize * flicker);
+    ctx.quadraticCurveTo(fx + inSize * 0.4, fy - inSize * 0.05, fx + inSize * 0.3, fy + inSize * 0.2);
+    ctx.quadraticCurveTo(fx, fy + inSize * 0.3, fx, fy + inSize * 0.25);
+    ctx.quadraticCurveTo(fx - inSize * 0.3, fy + inSize * 0.2, fx - inSize * 0.4, fy - inSize * 0.05);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
+
+    // Spark embers
+    var sparkCount = 3;
+    for (var s = 0; s < sparkCount; s++) {
+        var sx = fx + Math.sin(Date.now() / 300 + s * 2.1 + f.row) * size * 0.4;
+        var sy = fy - size * 0.3 - Math.abs(Math.sin(Date.now() / 250 + s * 1.7 + f.col)) * size * 0.8;
+        ctx.fillStyle = 'rgba(255, 200, 50, 0.7)';
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(1, size * 0.06), 0, Math.PI * 2);
+        ctx.fill();
+    }
 }
 
 function drawPlayer(p) {
@@ -1260,7 +1470,8 @@ function drawLostDirectionOverlay() {
     // Find the most recent notification and its tier, also collect active players with their tier
     var newestTime = 0;
     var maxTier = 0;  // Highest-severity tier among active notifications
-    var playerTiers = {};  // {pIndex: tier}
+    var playerTiers = {};   // {pIndex: tier}
+    var playerMsgs = {};    // {pIndex: customMsg} — per-player custom message override
     var activePlayers = [];
     for (var n = 0; n < lostNotifications.length; n++) {
         var notif = lostNotifications[n];
@@ -1273,8 +1484,9 @@ function drawLostDirectionOverlay() {
             if (activePlayers.indexOf(pIdx) === -1) {
                 activePlayers.push(pIdx);
             }
-            // Keep the most recent tier for each player
+            // Keep the most recent tier and custom message for each player
             playerTiers[pIdx] = t;
+            if (notif.msg) { playerMsgs[pIdx] = notif.msg; }
             if (t > maxTier) maxTier = t;
             if (notif.timestamp > newestTime) {
                 newestTime = notif.timestamp;
@@ -1405,6 +1617,7 @@ function drawLostDirectionOverlay() {
         var pp = players[pi];
         var pt = playerTiers[pi] || 0;
         var ptConfig = TIER_OVERLAY[Math.min(pt, 2)];
+        var playerMsg = playerMsgs[pi] || ptConfig.msg;
         var playerLineY = bodyY + a * lineSpacing + bodyFontSize / 2;
 
         // Measure text widths for centering
@@ -1413,7 +1626,7 @@ function drawLostDirectionOverlay() {
         var spaceWidth = ctx.measureText(' ').width;
 
         ctx.font = bodyFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
-        var msgWidth = ctx.measureText(ptConfig.msg).width;
+        var msgWidth = ctx.measureText(playerMsg).width;
 
         var dotRadius = Math.max(6, bodyFontSize * 0.35);
         var dotGap = bodyFontSize * 0.5;
@@ -1451,7 +1664,7 @@ function drawLostDirectionOverlay() {
         var msgC = ptConfig.msgColor.replace('X', overallAlpha);
         ctx.fillStyle = msgC;
         ctx.font = bodyFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
-        ctx.fillText(ptConfig.msg, lostX, playerLineY);
+        ctx.fillText(playerMsg, lostX, playerLineY);
     }
 
     // === Bottom emphasis line (if both players affected) ===
@@ -1460,7 +1673,16 @@ function drawLostDirectionOverlay() {
         var emFontSize = Math.max(12, Math.floor(panelH * 0.13));
         var emphasisMsg;
         if (maxTier >= 2) {
-            emphasisMsg = '💀 两位玩家都陷入了致命严寒！';
+            // Check if one player survived (has custom companion-died message)
+            var hasSurvivor = false;
+            for (var a2 = 0; a2 < activePlayers.length; a2++) {
+                var idx2 = activePlayers[a2];
+                var m = playerMsgs[idx2];
+                if (m && m.indexOf('同伴') !== -1) { hasSurvivor = true; break; }
+            }
+            emphasisMsg = hasSurvivor
+                ? '💀 严寒夺走了一位玩家，幸存者在孤独中挣扎！'
+                : '💀 两位玩家都陷入了致命严寒！';
         } else if (maxTier >= 1) {
             emphasisMsg = '👹 两位玩家都遭遇了雪怪！';
         } else {
@@ -1643,6 +1865,14 @@ function movePlayer(pIndex, dRow, dCol) {
         }
     }
 
+    // Check flame collection (v4.2)
+    for (var fi = 0; fi < flames.length; fi++) {
+        if (p.row === flames[fi].row && p.col === flames[fi].col) {
+            collectFlame(pIndex, fi);
+            break;
+        }
+    }
+
     // Check monster collision
     for (var i = 0; i < monsters.length; i++) {
         if (p.row === monsters[i].row && p.col === monsters[i].col) {
@@ -1771,8 +2001,9 @@ function setupGame() {
 
     statusEl.textContent = 'Go!';
 
-    // Place full vision potion(s)
+    // Place pickups
     placePotions();
+    placeFlames();
 
     // Generate monsters on three-way intersections (only if enabled)
     stopMonsterMovement();
