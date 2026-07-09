@@ -1,11 +1,12 @@
 /* ========================================
-   Maze Game - Two-Player Mode v3.1
+   Maze Game - Two-Player Mode v3.2
    Data structure: 2D array/matrix for maze grid
    0 = path, 1 = wall
 
    Player 1 = Green  (WASD keys)
    Player 2 = Blue   (Arrow keys)
 
+   v3.2: Single-player / two-player mode toggle button.
    v3.1: Toggle button to enable/disable monster generation.
    v3.0: Monster units patrol three-way intersections.
          Touching a monster resets player to spawn (1,1).
@@ -26,6 +27,9 @@ var levelSelect = document.getElementById('levelSelect');
 var regenBtn = document.getElementById('regenerateBtn');
 var fogToggleBtn = document.getElementById('fogToggleBtn');
 var monsterToggleBtn = document.getElementById('monsterToggleBtn');
+var modeToggleBtn = document.getElementById('modeToggleBtn');
+var player2Panel = document.getElementById('player2Panel');
+var vsDivider = document.getElementById('vsDivider');
 var statusEl = document.getElementById('gameStatus');
 
 // ==================== Game State ====================
@@ -42,6 +46,9 @@ var isLoading = false;
 // Fog of War state
 var fogEnabled = true;
 var fogRadius = 3;  // Cells visible around each player
+
+// Game mode state
+var twoPlayerMode = true;  // true = two-player, false = single-player
 
 // Monster toggle state
 var monstersEnabled = true;
@@ -162,7 +169,7 @@ function collectPotion(p) {
     console.log('[Maze] ' + p.name + ' collected potion! Full vision for 3s');
 
     // Show status message
-    if (!players[0].finished || !players[1].finished) {
+    if (!players[0].finished || (twoPlayerMode && !players[1].finished)) {
         statusEl.textContent = p.name + ' found a vision potion! 🧪';
     }
 
@@ -591,8 +598,13 @@ function renderMaze() {
             for (var col = 0; col < mazeWidth; col++) {
                 // Calculate Chebyshev distance (square vision) to nearest player
                 var d1 = Math.max(Math.abs(row - players[0].row), Math.abs(col - players[0].col));
-                var d2 = Math.max(Math.abs(row - players[1].row), Math.abs(col - players[1].col));
-                var minDist = Math.min(d1, d2);
+                var minDist;
+                if (twoPlayerMode) {
+                    var d2 = Math.max(Math.abs(row - players[1].row), Math.abs(col - players[1].col));
+                    minDist = Math.min(d1, d2);
+                } else {
+                    minDist = d1;
+                }
 
                 if (minDist > fogRadius) {
                     // Full fog — completely hidden, fully opaque
@@ -614,8 +626,13 @@ function renderMaze() {
 
     // Draw end point (gold) — only visible when within fog range of a player
     var endDist1 = Math.max(Math.abs(endRow - players[0].row), Math.abs(endCol - players[0].col));
-    var endDist2 = Math.max(Math.abs(endRow - players[1].row), Math.abs(endCol - players[1].col));
-    var endMinDist = Math.min(endDist1, endDist2);
+    var endMinDist;
+    if (twoPlayerMode) {
+        var endDist2 = Math.max(Math.abs(endRow - players[1].row), Math.abs(endCol - players[1].col));
+        endMinDist = Math.min(endDist1, endDist2);
+    } else {
+        endMinDist = endDist1;
+    }
     if (!fogEnabled || hasFullVision || endMinDist <= fogRadius) {
         var ex = offsetX + endCol * cellSize;
         var ey = offsetY + endRow * cellSize;
@@ -630,8 +647,12 @@ function renderMaze() {
         var monsterVisible = !fogEnabled || hasFullVision;
         if (!monsterVisible) {
             var md1 = Math.max(Math.abs(m.row - players[0].row), Math.abs(m.col - players[0].col));
-            var md2 = Math.max(Math.abs(m.row - players[1].row), Math.abs(m.col - players[1].col));
-            monsterVisible = Math.min(md1, md2) <= fogRadius;
+            if (twoPlayerMode) {
+                var md2 = Math.max(Math.abs(m.row - players[1].row), Math.abs(m.col - players[1].col));
+                monsterVisible = Math.min(md1, md2) <= fogRadius;
+            } else {
+                monsterVisible = md1 <= fogRadius;
+            }
         }
         if (monsterVisible) {
             drawMonster(m);
@@ -644,17 +665,23 @@ function renderMaze() {
         var potionVisible = !fogEnabled || hasFullVision;
         if (!potionVisible) {
             var pd1 = Math.max(Math.abs(potion.row - players[0].row), Math.abs(potion.col - players[0].col));
-            var pd2 = Math.max(Math.abs(potion.row - players[1].row), Math.abs(potion.col - players[1].col));
-            potionVisible = Math.min(pd1, pd2) <= fogRadius + 2;
+            if (twoPlayerMode) {
+                var pd2 = Math.max(Math.abs(potion.row - players[1].row), Math.abs(potion.col - players[1].col));
+                potionVisible = Math.min(pd1, pd2) <= fogRadius + 2;
+            } else {
+                potionVisible = pd1 <= fogRadius + 2;
+            }
         }
         if (potionVisible) {
             drawPotion();
         }
     }
 
-    // Draw both players (always visible)
+    // Draw players (always visible)
     drawPlayer(players[0]);
-    drawPlayer(players[1]);
+    if (twoPlayerMode) {
+        drawPlayer(players[1]);
+    }
 }
 
 function drawPotion() {
@@ -876,6 +903,22 @@ function movePlayer(pIndex, dRow, dCol) {
 }
 
 function checkGameOver() {
+    // Single player mode: P1 reaching end = immediate game over
+    if (!twoPlayerMode) {
+        if (players[0].finished) {
+            var t1 = players[0].elapsed;
+            statusEl.textContent = '🏆 ' + players[0].name + ' completed in ' + t1 + 's!';
+            console.log('[Maze] Game over (single):', players[0].name, t1 + 's');
+
+            var size = parseInt(levelSelect.value);
+            var levelMap = {11: 1, 21: 2, 31: 3, 41: 4, 51: 5};
+            var level = levelMap[size] || 1;
+            submitScore(players[0].name, t1, level);
+        }
+        return;
+    }
+
+    // Two player mode: original logic
     if (players[0].finished && players[1].finished) {
         // Both finished, compare times
         var t1 = players[0].elapsed;
@@ -906,6 +949,28 @@ function checkGameOver() {
 }
 
 // ==================== Game Init & Reset ====================
+
+/**
+ * Update UI visibility based on single/two-player mode.
+ */
+function updateModeUI() {
+    if (twoPlayerMode) {
+        player2Panel.style.display = '';
+        vsDivider.style.display = '';
+        modeToggleBtn.textContent = '👥 单人模式';
+        modeToggleBtn.classList.remove('single-mode');
+    } else {
+        player2Panel.style.display = 'none';
+        vsDivider.style.display = 'none';
+        modeToggleBtn.textContent = '👤 双人模式';
+        modeToggleBtn.classList.add('single-mode');
+        // P2 is not active in single mode
+        players[1].finished = false;
+        stopPlayerTimer(players[1]);
+        players[1].elapsed = 0;
+        timer2El.textContent = '0';
+    }
+}
 
 function setupGame() {
     // Reset both players
@@ -955,6 +1020,9 @@ function setupGame() {
         generateMonsters();
         startMonsterMovement();
     }
+
+    // Apply mode UI
+    updateModeUI();
 }
 
 function loadMaze() {
@@ -1004,8 +1072,12 @@ function loadMaze() {
 document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
 
-    // Check if both already finished
-    if (players[0].finished && players[1].finished) return;
+    // Check if game is already over
+    if (twoPlayerMode) {
+        if (players[0].finished && players[1].finished) return;
+    } else {
+        if (players[0].finished) return;
+    }
 
     // ---- Player 1: WASD ----
     var p1dRow = 0, p1dCol = 0;
@@ -1023,19 +1095,21 @@ document.addEventListener('keydown', function(e) {
         return;
     }
 
-    // ---- Player 2: Arrow keys ----
-    var p2dRow = 0, p2dCol = 0;
-    switch (e.key) {
-        case 'ArrowUp':    p2dRow = -1; break;
-        case 'ArrowDown':  p2dRow = 1;  break;
-        case 'ArrowLeft':  p2dCol = -1; break;
-        case 'ArrowRight': p2dCol = 1;  break;
-    }
+    // ---- Player 2: Arrow keys (two-player mode only) ----
+    if (twoPlayerMode) {
+        var p2dRow = 0, p2dCol = 0;
+        switch (e.key) {
+            case 'ArrowUp':    p2dRow = -1; break;
+            case 'ArrowDown':  p2dRow = 1;  break;
+            case 'ArrowLeft':  p2dCol = -1; break;
+            case 'ArrowRight': p2dCol = 1;  break;
+        }
 
-    if (p2dRow !== 0 || p2dCol !== 0) {
-        e.preventDefault();
-        if (!players[1].started) startPlayerTimer(players[1]);
-        movePlayer(1, p2dRow, p2dCol);
+        if (p2dRow !== 0 || p2dCol !== 0) {
+            e.preventDefault();
+            if (!players[1].started) startPlayerTimer(players[1]);
+            movePlayer(1, p2dRow, p2dCol);
+        }
     }
 });
 
@@ -1074,6 +1148,20 @@ monsterToggleBtn.addEventListener('click', function() {
         monsters = [];
         statusEl.textContent = '☮ Monsters disabled!';
     }
+    renderMaze();
+});
+
+modeToggleBtn.addEventListener('click', function() {
+    twoPlayerMode = !twoPlayerMode;
+    updateModeUI();
+    // Reset players and timers when switching modes (keep same maze)
+    resetPlayerTimer(players[0]);
+    resetPlayerTimer(players[1]);
+    players[0].row = 1; players[0].col = 1;
+    players[1].row = 1; players[1].col = 1;
+    players[0].finished = false;
+    players[1].finished = false;
+    statusEl.textContent = 'Go!';
     renderMaze();
 });
 

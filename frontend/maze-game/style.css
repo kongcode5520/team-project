@@ -189,6 +189,21 @@ button:active { transform: scale(0.97); }
     background-color: #2a4a2a;
 }
 
+/* --- Mode Toggle Button --- */
+#modeToggleBtn {
+    background-color: #4a6a8a;
+    transition: background-color 0.3s, color 0.3s;
+}
+#modeToggleBtn:hover {
+    background-color: #3a5a6a;
+}
+#modeToggleBtn.single-mode {
+    background-color: #6a6a3a;
+}
+#modeToggleBtn.single-mode:hover {
+    background-color: #5a5a2a;
+}
+
 /* --- Monster Toggle Button --- */
 #monsterToggleBtn {
     background-color: #8a3a4a;
