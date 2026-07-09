@@ -1,11 +1,12 @@
 /* ========================================
-   Maze Game - Two-Player Mode v3.2
+   Maze Game - Two-Player Mode v3.3
    Data structure: 2D array/matrix for maze grid
    0 = path, 1 = wall
 
    Player 1 = Green  (WASD keys)
    Player 2 = Blue   (Arrow keys)
 
+   v3.3: Multiple potions on harder difficulties (Hell=2, Heaven=3).
    v3.2: Single-player / two-player mode toggle button.
    v3.1: Toggle button to enable/disable monster generation.
    v3.0: Monster units patrol three-way intersections.
@@ -53,8 +54,8 @@ var twoPlayerMode = true;  // true = two-player, false = single-player
 // Monster toggle state
 var monstersEnabled = true;
 
-// Full Map Vision Potion state
-var potion = { row: -1, col: -1, active: false };
+// Full Map Vision Potion state (array for multiple potions on hard difficulties)
+var potions = [];  // Array of {row, col, active}
 var fullVisionUntil = 0;  // timestamp (ms) when full vision expires, 0 = inactive
 var potionPulseAnim = null;  // animation interval handle
 
@@ -129,10 +130,22 @@ function generateMaze(w, h) {
 
 // ==================== Potion Placement ====================
 
-function placePotion() {
+/**
+ * Returns number of potions based on map size.
+ * Hell (41) = 2 potions, Heaven (51) = 3 potions, others = 1.
+ */
+function getPotionCount(mapSize) {
+    if (mapSize >= 51) return 3;   // Heaven
+    if (mapSize >= 41) return 2;   // Hell
+    return 1;                       // Easy / Medium / Hard
+}
+
+function placePotions() {
     // Cancel any active effect
-    potion.active = false;
+    potions = [];
     fullVisionUntil = 0;
+
+    var count = getPotionCount(mazeWidth);
 
     // Collect all valid path cells (not start, not end, not too close to either)
     var pathCells = [];
@@ -152,21 +165,53 @@ function placePotion() {
         }
     }
 
-    if (pathCells.length > 0) {
-        var cell = pathCells[Math.floor(Math.random() * pathCells.length)];
-        potion.row = cell.row;
-        potion.col = cell.col;
-        potion.active = true;
-        console.log('[Maze] Potion placed at (' + potion.row + ', ' + potion.col + ')');
-    } else {
-        console.log('[Maze] No suitable cell for potion');
+    if (pathCells.length === 0) {
+        console.log('[Maze] No suitable cell for any potion');
+        return;
     }
+
+    // Limit count to available cells
+    count = Math.min(count, pathCells.length);
+
+    // Spread potions apart: shuffle candidates, greedily pick spaced cells
+    for (var i = pathCells.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var tmp = pathCells[i];
+        pathCells[i] = pathCells[j];
+        pathCells[j] = tmp;
+    }
+
+    var minPotionDist = 8;  // Minimum Manhattan distance between potions
+    for (var i = 0; i < pathCells.length && potions.length < count; i++) {
+        var candidate = pathCells[i];
+        var tooClose = false;
+        for (var s = 0; s < potions.length; s++) {
+            var dist = Math.abs(candidate.row - potions[s].row) +
+                       Math.abs(candidate.col - potions[s].col);
+            if (dist < minPotionDist) {
+                tooClose = true;
+                break;
+            }
+        }
+        if (!tooClose) {
+            potions.push({row: candidate.row, col: candidate.col, active: true});
+            console.log('[Maze] Potion #' + potions.length + ' placed at (' + candidate.row + ', ' + candidate.col + ')');
+        }
+    }
+
+    console.log('[Maze] Placed ' + potions.length + ' potion(s) (map size: ' + mazeWidth + ')');
 }
 
-function collectPotion(p) {
-    potion.active = false;
+function collectPotion(p, potionObj) {
+    // Remove this specific potion from the array
+    for (var i = 0; i < potions.length; i++) {
+        if (potions[i].row === potionObj.row && potions[i].col === potionObj.col) {
+            potions.splice(i, 1);
+            break;
+        }
+    }
     fullVisionUntil = Date.now() + 3000;  // 3 seconds of full vision
-    console.log('[Maze] ' + p.name + ' collected potion! Full vision for 3s');
+    console.log('[Maze] ' + p.name + ' collected potion! Full vision for 3s (' + potions.length + ' remaining)');
 
     // Show status message
     if (!players[0].finished || (twoPlayerMode && !players[1].finished)) {
@@ -207,8 +252,8 @@ function startPotionAnimation() {
     if (potionPulseAnim) clearInterval(potionPulseAnim);
     potionPulseAnim = setInterval(function() {
         updateVisionIndicator();
-        // Re-render if potion is active (for pulse animation) or vision is active (countdown)
-        if (potion.active || Date.now() < fullVisionUntil) {
+        // Re-render if potions exist (for pulse animation) or vision is active (countdown)
+        if (potions.length > 0 || Date.now() < fullVisionUntil) {
             renderMaze();
         }
         // When vision just expired, one final render to restore fog
@@ -659,21 +704,22 @@ function renderMaze() {
         }
     }
 
-    // ---- Draw potion ----
-    if (potion.active) {
+    // ---- Draw potions ----
+    for (var pi = 0; pi < potions.length; pi++) {
+        var pot = potions[pi];
         // Potion is visible: fog is off, OR full vision is active, OR within extended range
         var potionVisible = !fogEnabled || hasFullVision;
         if (!potionVisible) {
-            var pd1 = Math.max(Math.abs(potion.row - players[0].row), Math.abs(potion.col - players[0].col));
+            var pd1 = Math.max(Math.abs(pot.row - players[0].row), Math.abs(pot.col - players[0].col));
             if (twoPlayerMode) {
-                var pd2 = Math.max(Math.abs(potion.row - players[1].row), Math.abs(potion.col - players[1].col));
+                var pd2 = Math.max(Math.abs(pot.row - players[1].row), Math.abs(pot.col - players[1].col));
                 potionVisible = Math.min(pd1, pd2) <= fogRadius + 2;
             } else {
                 potionVisible = pd1 <= fogRadius + 2;
             }
         }
         if (potionVisible) {
-            drawPotion();
+            drawPotion(pot);
         }
     }
 
@@ -684,9 +730,9 @@ function renderMaze() {
     }
 }
 
-function drawPotion() {
-    var px = offsetX + potion.col * cellSize + cellSize / 2;
-    var py = offsetY + potion.row * cellSize + cellSize / 2;
+function drawPotion(p) {
+    var px = offsetX + p.col * cellSize + cellSize / 2;
+    var py = offsetY + p.row * cellSize + cellSize / 2;
     var size = cellSize * 0.4;
 
     // Pulse effect
@@ -878,8 +924,11 @@ function movePlayer(pIndex, dRow, dCol) {
     p.col = nc;
 
     // Check potion collection
-    if (potion.active && p.row === potion.row && p.col === potion.col) {
-        collectPotion(p);
+    for (var pi = 0; pi < potions.length; pi++) {
+        if (p.row === potions[pi].row && p.col === potions[pi].col) {
+            collectPotion(p, potions[pi]);
+            break;
+        }
     }
 
     // Check monster collision
@@ -1010,8 +1059,8 @@ function setupGame() {
 
     statusEl.textContent = 'Go!';
 
-    // Place full vision potion
-    placePotion();
+    // Place full vision potion(s)
+    placePotions();
 
     // Generate monsters on three-way intersections (only if enabled)
     stopMonsterMovement();
