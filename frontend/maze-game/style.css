@@ -123,6 +123,22 @@ body {
 }
 .p-time span { color: #e9c46a; }
 
+/* Per-player cold penalty status indicator */
+.p-cold-status {
+    font-size: 11px;
+    font-weight: bold;
+    color: #e04040;
+    min-width: 60px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: opacity 0.3s;
+}
+.p-cold-status:empty {
+    display: none;
+}
+
 .vs-divider {
     font-size: 20px;
     font-weight: bold;

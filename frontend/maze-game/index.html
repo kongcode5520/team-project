@@ -9,7 +9,7 @@
 <body>
     <!-- 导航栏 -->
     <nav class="navbar">
-        <span class="nav-title">Maze - Two Player v4.0.2</span>
+        <span class="nav-title">Maze - Two Player v4.1</span>
         <a href="../leaderboard/index.html" class="nav-link">Leaderboard</a>
     </nav>
 
@@ -22,6 +22,7 @@
                 <input type="text" id="player1Name" placeholder="Player 1" maxlength="12">
                 <span class="p-keys">WASD</span>
                 <span class="p-time">Time: <span id="timer1">0</span>s</span>
+                <span class="p-cold-status" id="player1ColdStatus"></span>
             </div>
             <div class="vs-divider" id="vsDivider">VS</div>
             <div class="player-panel p2" id="player2Panel">
@@ -29,10 +30,11 @@
                 <input type="text" id="player2Name" placeholder="Player 2" maxlength="12">
                 <span class="p-keys">Arrows</span>
                 <span class="p-time">Time: <span id="timer2">0</span>s</span>
+                <span class="p-cold-status" id="player2ColdStatus"></span>
             </div>
         </div>
 
-        <!-- 游戏进度状态 -->
+        <!-- 游戏进度状态（通用：胜利、平局等） -->
         <div class="game-status" id="gameStatus">Go!</div>
 
         <!-- 控制栏 -->

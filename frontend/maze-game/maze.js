@@ -1,11 +1,13 @@
 /* ========================================
-   Maze Game - Two-Player Mode v4.0.2
+   Maze Game - Two-Player Mode v4.1
    Data structure: 2D array/matrix for maze grid
    0 = path, 1 = wall
 
    Player 1 = Green  (WASD keys)
    Player 2 = Blue   (Arrow keys)
 
+   v4.1: Three-tier cold penalty — 1st=迷失方向(teleport nearby),
+         2nd=雪怪赶跑(teleport to spawn), 3rd=冻死(reset map).
    v4.0.2: Potions tied to fog toggle — fog off = no potions generated.
    v4.0.1: Enhanced lost-direction notification — large prominent
            canvas overlay with frost effects, supports multi-player display.
@@ -39,6 +41,8 @@ var modeToggleBtn = document.getElementById('modeToggleBtn');
 var player2Panel = document.getElementById('player2Panel');
 var vsDivider = document.getElementById('vsDivider');
 var statusEl = document.getElementById('gameStatus');
+var player1ColdStatusEl = document.getElementById('player1ColdStatus');
+var player2ColdStatusEl = document.getElementById('player2ColdStatus');
 
 // ==================== Game State ====================
 var maze = [];
@@ -84,11 +88,16 @@ var players = [
 var coldModeEnabled = false;
 var coldMaxProgress = 18000;   // 18 seconds for the bar to fill completely
 var coldProgress = [0, 0];     // Per-player progress in ms: [P1, P2]
+var coldPenaltyCount = [0, 0]; // v4.1: Per-player count of cold bar fills [P1, P2]
+                               // 0→next=迷失方向, 1→next=雪怪回城, 2→next=冻死重置
+var coldDeathPending = false;  // v4.1: true when Tier3 death animation is playing; freeze cold
+var coldStatusTimers = [null, null]; // v4.1: Per-player timers to clear cold status text
 var coldLastTick = null;       // Timestamp of last cold tick
 var coldInterval = null;       // Interval handle for cold update
 
-// v4.0.1: Lost direction notification queue — prominent overlay when penalty fires
-// Each entry: {pIndex, timestamp, duration} — duration default 3500ms
+// v4.1: Lost direction notification queue — prominent overlay when penalty fires
+// Each entry: {pIndex, timestamp, duration, tier}
+//   tier 0 = 迷失方向, tier 1 = 雪怪赶跑, tier 2 = 冻死
 var lostNotifications = [];     // Active lost-direction notification entries
 var lostNotifyDuration = 3500; // How long each notification stays visible (ms)
 
@@ -100,6 +109,8 @@ var lostNotifyDuration = 3500; // How long each notification stays visible (ms)
 function startColdMode() {
     stopColdMode();
     coldProgress = [0, 0];
+    coldPenaltyCount = [0, 0];
+    coldDeathPending = false;
     coldLastTick = Date.now();
     coldInterval = setInterval(updateColdProgress, 150);
     console.log('[Cold] Cold mode started (max progress: ' + coldMaxProgress + 'ms)');
@@ -114,8 +125,15 @@ function stopColdMode() {
         coldInterval = null;
     }
     coldProgress = [0, 0];
+    coldPenaltyCount = [0, 0];
     coldLastTick = null;
     lostNotifications = [];
+    // Clear per-player cold status
+    for (var i = 0; i < 2; i++) {
+        if (coldStatusTimers[i]) { clearTimeout(coldStatusTimers[i]); coldStatusTimers[i] = null; }
+    }
+    if (player1ColdStatusEl) player1ColdStatusEl.textContent = '';
+    if (player2ColdStatusEl) player2ColdStatusEl.textContent = '';
 }
 
 /**
@@ -124,6 +142,7 @@ function stopColdMode() {
  */
 function updateColdProgress() {
     if (!coldModeEnabled) return;
+    if (coldDeathPending) return;  // v4.1: freeze during death animation
 
     var now = Date.now();
     if (coldLastTick === null) { coldLastTick = now; return; }
@@ -153,55 +172,131 @@ function updateColdProgress() {
 }
 
 /**
- * Apply the cold penalty to a player:
- *   - Teleport the player to a random valid path cell within Chebyshev distance ≤ 5.
- *   - Show "你在暴风雪中迷失方向" on screen.
- *   - Cold bar resets for that player.
+ * Set a per-player cold status message that auto-clears after a delay.
+ * @param {number} pIndex - Player index (0 or 1)
+ * @param {string} msg - Status message to display
+ * @param {number} durationMs - How long before auto-clear (default 4000ms)
+ */
+function setPlayerColdStatus(pIndex, msg, durationMs) {
+    if (durationMs === undefined) durationMs = 4000;
+    var el = (pIndex === 0) ? player1ColdStatusEl : player2ColdStatusEl;
+    if (!el) return;
+    el.textContent = msg;
+    if (coldStatusTimers[pIndex]) clearTimeout(coldStatusTimers[pIndex]);
+    coldStatusTimers[pIndex] = setTimeout(function() {
+        el.textContent = '';
+        coldStatusTimers[pIndex] = null;
+    }, durationMs);
+}
+
+/**
+ * v4.1 — Three-tier cold penalty system:
+ *   1st fill (coldPenaltyCount=0): teleport nearby (max 5 cells), 迷失方向
+ *   2nd fill (coldPenaltyCount=1): teleport to spawn (1,1), 被雪怪赶跑
+ *   3rd fill (coldPenaltyCount=2): death — reset entire map (New Maze), 被冻死
+ *
+ * Each tier shows a different overlay message and per-player status.
+ * After the 3rd fill the counter resets to 0 for the next round.
  *
  * @param {number} pIndex - Player index (0 or 1)
  */
 function applyColdPenalty(pIndex) {
-    var p = players[pIndex];
-    var maxDist = 5;
+    // v4.1: If a death animation is already playing, don't start new penalties
+    if (coldDeathPending) return;
 
-    // Collect valid path cells within Chebyshev distance ≤ maxDist (excluding current cell)
-    var validCells = [];
-    for (var dr = -maxDist; dr <= maxDist; dr++) {
-        for (var dc = -maxDist; dc <= maxDist; dc++) {
-            if (dr === 0 && dc === 0) continue;
-            var nr = p.row + dr;
-            var nc = p.col + dc;
-            if (nr >= 0 && nr < mazeHeight && nc >= 0 && nc < mazeWidth &&
-                maze[nr][nc] === 0) {
-                // Exclude the end cell (don't accidentally win)
-                if (!(nr === endRow && nc === endCol)) {
-                    validCells.push({row: nr, col: nc});
+    var p = players[pIndex];
+    var tier = coldPenaltyCount[pIndex];
+
+    if (tier === 0) {
+        // === Tier 1: 在暴风雪中迷失方向 — teleport nearby (same as 4.0.2) ===
+        var maxDist = 5;
+        var validCells = [];
+        for (var dr = -maxDist; dr <= maxDist; dr++) {
+            for (var dc = -maxDist; dc <= maxDist; dc++) {
+                if (dr === 0 && dc === 0) continue;
+                var nr = p.row + dr;
+                var nc = p.col + dc;
+                if (nr >= 0 && nr < mazeHeight && nc >= 0 && nc < mazeWidth &&
+                    maze[nr][nc] === 0) {
+                    if (!(nr === endRow && nc === endCol)) {
+                        validCells.push({row: nr, col: nc});
+                    }
                 }
             }
         }
-    }
 
-    if (validCells.length > 0) {
-        var target = validCells[Math.floor(Math.random() * validCells.length)];
-        console.log('[Cold] ' + p.name + ' lost direction — teleported from (' +
-                    p.row + ',' + p.col + ') → (' + target.row + ',' + target.col + ')');
-        p.row = target.row;
-        p.col = target.col;
+        if (validCells.length > 0) {
+            var target = validCells[Math.floor(Math.random() * validCells.length)];
+            console.log('[Cold] ' + p.name + ' Tier1 迷失方向 — teleported from (' +
+                        p.row + ',' + p.col + ') → (' + target.row + ',' + target.col + ')');
+            p.row = target.row;
+            p.col = target.col;
+        } else {
+            console.log('[Cold] ' + p.name + ' Tier1 penalty but no valid nearby cell');
+        }
 
-        // Flash the player's position briefly via the canvas (handled in render)
-        // Add to lost notification queue for prominent overlay display
         lostNotifications.push({
             pIndex: pIndex,
             timestamp: Date.now(),
-            duration: lostNotifyDuration
+            duration: lostNotifyDuration,
+            tier: 0
         });
-    } else {
-        // No valid cell nearby — just log and skip
-        console.log('[Cold] ' + p.name + ' penalty triggered but no valid nearby cell found');
-    }
+        setPlayerColdStatus(pIndex, '❄️ 迷失方向');
+        coldPenaltyCount[pIndex] = 1;
 
-    // Also update status bar as a secondary indicator
-    statusEl.textContent = '❄️ ' + p.name + ' 在暴风雪中迷失方向！';
+    } else if (tier === 1) {
+        // === Tier 2: 你被雪怪赶跑了 — teleport to spawn (1,1) ===
+        console.log('[Cold] ' + p.name + ' Tier2 雪怪赶跑 — teleported to spawn (1,1)');
+        p.row = 1;
+        p.col = 1;
+
+        lostNotifications.push({
+            pIndex: pIndex,
+            timestamp: Date.now(),
+            duration: lostNotifyDuration,
+            tier: 1
+        });
+        setPlayerColdStatus(pIndex, '👹 被雪怪赶跑');
+        coldPenaltyCount[pIndex] = 2;
+
+    } else {
+        // === Tier 3: 冻死 — both players die, reset entire map ===
+        console.log('[Cold] ' + p.name + ' Tier3 冻死 — resetting maze');
+        coldDeathPending = true;  // Freeze cold progress during death animation
+
+        // Clear all old notifications so only the death message shows
+        lostNotifications = [];
+        for (var ci = 0; ci < 2; ci++) {
+            if (coldStatusTimers[ci]) { clearTimeout(coldStatusTimers[ci]); coldStatusTimers[ci] = null; }
+        }
+
+        // Push death notification for all active non-finished players
+        // (respect twoPlayerMode: skip P2 in single-player)
+        var deadCount = 0;
+        for (var pi = 0; pi < 2; pi++) {
+            if (!twoPlayerMode && pi === 1) continue;  // P2 inactive in single-player
+            if (!players[pi].finished) {
+                lostNotifications.push({
+                    pIndex: pi,
+                    timestamp: Date.now(),
+                    duration: 5000,
+                    tier: 2
+                });
+                setPlayerColdStatus(pi, '💀 被冻死了');
+                deadCount++;
+            }
+        }
+        console.log('[Cold] Tier3: ' + deadCount + ' player(s) died');
+
+        // Reset penalty counters
+        coldPenaltyCount = [0, 0];
+
+        // Trigger maze regeneration after the death notification fully plays out
+        // (5000ms = same as the overlay duration so player sees the full message)
+        setTimeout(function() {
+            loadMaze();
+        }, 5000);
+    }
 }
 
 // ==================== Monster State ====================
@@ -1140,28 +1235,47 @@ function drawColdBars() {
     }
 }
 
-// ==================== Lost Direction Overlay (v4.0.1) ====================
+// ==================== Lost Direction Overlay (v4.1) ====================
 
 /**
- * Draw the prominent "暴风雪中迷失方向" overlay on the canvas.
- * This is called from renderMaze() when there are active lost-direction notifications.
- * Shows a large centered panel with player name(s), frost effects, and pulsing animation.
+ * Tier-specific overlay config.
+ * Each tier has a title, per-player message, and border colors.
+ */
+var TIER_OVERLAY = {
+    0: { title: '🌨️ 暴风雪来袭！', msg: '在暴风雪中迷失方向！', msgColor: 'rgba(255, 220, 160, X)', borderIcy: true,  danger: 0.7 },
+    1: { title: '👹 雪怪出现了！',     msg: '被雪怪赶跑了！回到起点！', msgColor: 'rgba(255, 160, 100, X)', borderIcy: false, danger: 0.9 },
+    2: { title: '💀 严寒致死！',       msg: '被冻死了！重置地图！',   msgColor: 'rgba(255, 80, 60, X)',   borderIcy: false, danger: 1.0 }
+};
+
+/**
+ * Draw the prominent cold penalty overlay on the canvas.
+ * v4.1: Tier-aware — shows different title, message, and colors per penalty tier.
+ * This is called from renderMaze() when there are active notifications.
  */
 function drawLostDirectionOverlay() {
     if (lostNotifications.length === 0) return;
 
     var now = Date.now();
 
-    // Find the most recent notification for fade-in timing
+    // Find the most recent notification and its tier, also collect active players with their tier
     var newestTime = 0;
+    var maxTier = 0;  // Highest-severity tier among active notifications
+    var playerTiers = {};  // {pIndex: tier}
     var activePlayers = [];
     for (var n = 0; n < lostNotifications.length; n++) {
         var notif = lostNotifications[n];
         var elapsed = now - notif.timestamp;
         if (elapsed < notif.duration) {
-            if (activePlayers.indexOf(notif.pIndex) === -1) {
-                activePlayers.push(notif.pIndex);
+            var pIdx = notif.pIndex;
+            // Skip P2 in single-player mode
+            if (!twoPlayerMode && pIdx === 1) continue;
+            var t = notif.tier || 0;
+            if (activePlayers.indexOf(pIdx) === -1) {
+                activePlayers.push(pIdx);
             }
+            // Keep the most recent tier for each player
+            playerTiers[pIdx] = t;
+            if (t > maxTier) maxTier = t;
             if (notif.timestamp > newestTime) {
                 newestTime = notif.timestamp;
             }
@@ -1170,48 +1284,83 @@ function drawLostDirectionOverlay() {
 
     if (activePlayers.length === 0) return;
 
+    // Tier config (clamp maxTier to [0, 2])
+    var tierConfig = TIER_OVERLAY[Math.min(maxTier, 2)];
+
     // Calculate fade-in (0→1 over first 400ms)
     var newestElapsed = now - newestTime;
     var overallAlpha = Math.min(1, newestElapsed / 400);
 
-    // Panel dimensions — centered, dynamically sized for content
-    var panelW = Math.floor(canvas.width * 0.78);
-    var panelH = Math.floor(canvas.height * 0.26);
-    var panelX = Math.floor((canvas.width - panelW) / 2);
-    var panelY = Math.floor(canvas.height * 0.15);
+    // Shake effect for tier 2 (death)
+    var shakeX = 0, shakeY = 0;
+    if (maxTier >= 2) {
+        shakeX = Math.sin(now / 60) * 3 * overallAlpha;
+        shakeY = Math.cos(now / 73) * 2 * overallAlpha;
+    }
 
-    // === Beautiful snowflake particles (full canvas, behind + over panel) ===
-    var numFlakes = 40;
+    // Panel dimensions — larger for higher tiers (more impactful message)
+    var panelW = Math.floor(canvas.width * 0.80);
+    var panelH = Math.floor(canvas.height * (maxTier >= 2 ? 0.30 : 0.26));
+    var panelX = Math.floor((canvas.width - panelW) / 2) + shakeX;
+    var panelY = Math.floor(canvas.height * 0.15) + shakeY;
+
+    // === Snowflake particles (tier 0/1: snow, tier 2: ash/embers) ===
+    var numFlakes = maxTier >= 2 ? 50 : 40;
     for (var f = 0; f < numFlakes; f++) {
         var fx = ((f * 137 + now * 0.02) % (canvas.width + 60)) - 30;
         var fy = ((f * 89 + now * 0.025) % (canvas.height + 60)) - 30;
         var flakeSize = 2.5 + (f % 5) * 1.8;
         var flakeAlpha = (0.25 + Math.sin(now / 600 + f * 1.7) * 0.2) * overallAlpha;
-        drawSnowflake(fx, fy, flakeSize, flakeAlpha, now + f * 100);
+        if (maxTier >= 2) {
+            // Ember particles for death tier
+            drawSnowflake(fx, fy, flakeSize * 0.6, flakeAlpha * 0.7, now + f * 100);
+        } else {
+            drawSnowflake(fx, fy, flakeSize, flakeAlpha, now + f * 100);
+        }
     }
 
-    // === Main panel background (frosted dark glass) ===
-    ctx.fillStyle = 'rgba(5, 12, 30, ' + (0.92 * overallAlpha) + ')';
+    // === Main panel background (frosted dark glass, redder for higher tiers) ===
+    var bgR = 5, bgG = 12, bgB = 30;
+    if (maxTier >= 2) { bgR = 25; bgG = 8; bgB = 12; }
+    else if (maxTier >= 1) { bgR = 15; bgG = 10; bgB = 20; }
+    ctx.fillStyle = 'rgba(' + bgR + ', ' + bgG + ', ' + bgB + ', ' + (0.92 * overallAlpha) + ')';
     ctx.fillRect(panelX, panelY, panelW, panelH);
 
-    // === Outer icy border with pulse ===
+    // === Outer border — tier-specific color ===
     var borderPulse = Math.sin(now / 250) * 0.3 + 0.7;
-    ctx.strokeStyle = 'rgba(100, 200, 240, ' + (borderPulse * overallAlpha) + ')';
+    var borderColor;
+    if (maxTier >= 2) {
+        borderColor = 'rgba(255, 40, 40, ' + (borderPulse * overallAlpha) + ')';
+    } else if (maxTier >= 1) {
+        borderColor = 'rgba(255, 140, 60, ' + (borderPulse * overallAlpha) + ')';
+    } else {
+        borderColor = 'rgba(100, 200, 240, ' + (borderPulse * overallAlpha) + ')';
+    }
+    ctx.strokeStyle = borderColor;
     ctx.lineWidth = 3;
     ctx.strokeRect(panelX, panelY, panelW, panelH);
 
-    // === Inner danger border (red pulsing) ===
+    // === Inner danger border ===
     var dangerPulse = Math.sin(now / 200) * 0.4 + 0.6;
-    ctx.strokeStyle = 'rgba(255, 60, 80, ' + (dangerPulse * 0.7 * overallAlpha) + ')';
+    var innerDanger = tierConfig.danger;
+    ctx.strokeStyle = 'rgba(255, ' + Math.floor(60 * (1 - innerDanger) + 40) + ', ' + Math.floor(80 * (1 - innerDanger) + 20) + ', ' + (innerDanger * 0.8 * overallAlpha) + ')';
     ctx.lineWidth = 1.5;
     ctx.strokeRect(panelX + 4, panelY + 4, panelW - 8, panelH - 8);
 
-    // === Top accent line (icy glow) ===
+    // === Top accent line (icy glow for tier 0, fire glow for tier 1-2) ===
     var accentGrad = ctx.createLinearGradient(panelX, panelY, panelX + panelW, panelY);
-    accentGrad.addColorStop(0, 'rgba(120, 200, 240, 0)');
-    accentGrad.addColorStop(0.2, 'rgba(120, 200, 240, ' + (0.8 * overallAlpha) + ')');
-    accentGrad.addColorStop(0.8, 'rgba(120, 200, 240, ' + (0.8 * overallAlpha) + ')');
-    accentGrad.addColorStop(1, 'rgba(120, 200, 240, 0)');
+    var accentColor;
+    if (maxTier >= 2) {
+        accentColor = 'rgba(255, 80, 40';
+    } else if (maxTier >= 1) {
+        accentColor = 'rgba(255, 160, 60';
+    } else {
+        accentColor = 'rgba(120, 200, 240';
+    }
+    accentGrad.addColorStop(0, accentColor + ', 0)');
+    accentGrad.addColorStop(0.2, accentColor + ', ' + (0.8 * overallAlpha) + ')');
+    accentGrad.addColorStop(0.8, accentColor + ', ' + (0.8 * overallAlpha) + ')');
+    accentGrad.addColorStop(1, accentColor + ', 0)');
     ctx.strokeStyle = accentGrad;
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -1219,26 +1368,34 @@ function drawLostDirectionOverlay() {
     ctx.lineTo(panelX + panelW - 10, panelY + 2);
     ctx.stroke();
 
-    // === Title: "🌨️ 暴风雪来袭！" ===
+    // === Title — tier-specific ===
     var titleFontSize = Math.max(18, Math.floor(panelH * 0.2));
-    ctx.fillStyle = 'rgba(180, 220, 255, ' + overallAlpha + ')';
+    var titleColor;
+    if (maxTier >= 2) {
+        titleColor = 'rgba(255, 180, 150';
+    } else if (maxTier >= 1) {
+        titleColor = 'rgba(255, 200, 150';
+    } else {
+        titleColor = 'rgba(180, 220, 255';
+    }
+    ctx.fillStyle = titleColor + ', ' + overallAlpha + ')';
     ctx.font = 'bold ' + titleFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     var titleY = panelY + Math.floor(panelH * 0.07);
-    ctx.fillText('🌨️ 暴风雪来袭！', panelX + panelW / 2, titleY);
+    ctx.fillText(tierConfig.title, panelX + panelW / 2, titleY);
 
     // === Separator line ===
     var sepY = titleY + titleFontSize + Math.floor(panelH * 0.04);
     var sepW = Math.floor(panelW * 0.45);
-    ctx.strokeStyle = 'rgba(120, 180, 220, ' + (0.5 * overallAlpha) + ')';
+    ctx.strokeStyle = 'rgba(' + (maxTier >= 1 ? '255, 150, 120' : '120, 180, 220') + ', ' + (0.5 * overallAlpha) + ')';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(panelX + (panelW - sepW) / 2, sepY);
     ctx.lineTo(panelX + (panelW + sepW) / 2, sepY);
     ctx.stroke();
 
-    // === Player lines — each line is individually centered ===
+    // === Player lines — each player shows their own tier's message ===
     var bodyFontSize = Math.max(15, Math.floor(panelH * 0.17));
     var lineSpacing = bodyFontSize + Math.floor(panelH * 0.08);
     var bodyY = sepY + Math.floor(panelH * 0.08);
@@ -1246,23 +1403,24 @@ function drawLostDirectionOverlay() {
     for (var a = 0; a < activePlayers.length; a++) {
         var pi = activePlayers[a];
         var pp = players[pi];
+        var pt = playerTiers[pi] || 0;
+        var ptConfig = TIER_OVERLAY[Math.min(pt, 2)];
         var playerLineY = bodyY + a * lineSpacing + bodyFontSize / 2;
 
-        // Draw the full line centered: [dot] Name 在暴风雪中迷失方向！
-        // Measure the total width to center the whole block
+        // Measure text widths for centering
         ctx.font = 'bold ' + bodyFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
         var nameWidth = ctx.measureText(pp.name).width;
         var spaceWidth = ctx.measureText(' ').width;
 
         ctx.font = bodyFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
-        var msgWidth = ctx.measureText('在暴风雪中迷失方向！').width;
+        var msgWidth = ctx.measureText(ptConfig.msg).width;
 
         var dotRadius = Math.max(6, bodyFontSize * 0.35);
         var dotGap = bodyFontSize * 0.5;
         var totalWidth = dotRadius * 2 + dotGap + nameWidth + spaceWidth + msgWidth;
         var lineStartX = panelX + (panelW - totalWidth) / 2;
 
-        // Colored dot
+        // Colored dot (pulse for tier 2)
         var dotX = lineStartX + dotRadius;
         ctx.fillStyle = pp.color;
         ctx.beginPath();
@@ -1271,6 +1429,14 @@ function drawLostDirectionOverlay() {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
         ctx.lineWidth = 1.5;
         ctx.stroke();
+        if (pt >= 2) {
+            // Skull dot for death
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold ' + Math.max(8, dotRadius) + 'px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('☠', dotX, playerLineY);
+        }
 
         // Player name (colored, bold)
         var nameX = dotX + dotRadius + dotGap;
@@ -1280,27 +1446,38 @@ function drawLostDirectionOverlay() {
         ctx.textBaseline = 'middle';
         ctx.fillText(pp.name, nameX, playerLineY);
 
-        // "在暴风雪中迷失方向！" (warm orange-white glow)
+        // Tier-specific message
         var lostX = nameX + nameWidth + spaceWidth;
-        ctx.fillStyle = 'rgba(255, 220, 160, ' + overallAlpha + ')';
+        var msgC = ptConfig.msgColor.replace('X', overallAlpha);
+        ctx.fillStyle = msgC;
         ctx.font = bodyFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
-        ctx.fillText('在暴风雪中迷失方向！', lostX, playerLineY);
+        ctx.fillText(ptConfig.msg, lostX, playerLineY);
     }
 
-    // === Bottom emphasis line (if both players lost) ===
+    // === Bottom emphasis line (if both players affected) ===
     if (activePlayers.length >= 2) {
         var emY = bodyY + activePlayers.length * lineSpacing + Math.floor(panelH * 0.03);
         var emFontSize = Math.max(12, Math.floor(panelH * 0.13));
-        ctx.fillStyle = 'rgba(255, 100, 100, ' + (dangerPulse * overallAlpha) + ')';
+        var emphasisMsg;
+        if (maxTier >= 2) {
+            emphasisMsg = '💀 两位玩家都陷入了致命严寒！';
+        } else if (maxTier >= 1) {
+            emphasisMsg = '👹 两位玩家都遭遇了雪怪！';
+        } else {
+            emphasisMsg = '⚠️ 两位玩家都在暴风雪中迷失了！';
+        }
+        ctx.fillStyle = 'rgba(255, ' + (maxTier >= 1 ? '100' : '150') + ', ' + (maxTier >= 1 ? '60' : '100') + ', ' + (dangerPulse * overallAlpha) + ')';
         ctx.font = 'italic ' + emFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillText('⚠️ 两位玩家都在暴风雪中迷失了！', panelX + panelW / 2, emY);
+        ctx.fillText(emphasisMsg, panelX + panelW / 2, emY);
     }
 
-    // === Bottom snow drift line ===
+    // === Bottom snow drift / ember line ===
     var driftY = panelY + panelH - 3;
-    ctx.strokeStyle = 'rgba(180, 220, 255, ' + (0.5 * overallAlpha) + ')';
+    ctx.strokeStyle = maxTier >= 2
+        ? 'rgba(255, 100, 40, ' + (0.5 * overallAlpha) + ')'
+        : 'rgba(180, 220, 255, ' + (0.5 * overallAlpha) + ')';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(panelX + 20, driftY);
