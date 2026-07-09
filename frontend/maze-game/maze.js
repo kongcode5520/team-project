@@ -1,11 +1,13 @@
 /* ========================================
-   Maze Game - Two-Player Mode v4.0
+   Maze Game - Two-Player Mode v4.0.1
    Data structure: 2D array/matrix for maze grid
    0 = path, 1 = wall
 
    Player 1 = Green  (WASD keys)
    Player 2 = Blue   (Arrow keys)
 
+   v4.0.1: Enhanced lost-direction notification — large prominent
+           canvas overlay with frost effects, supports multi-player display.
    v4.0: Extreme Cold Mode — cold progress bar fills over time;
          when full, player is randomly teleported nearby (max 5 units)
          and shown "你在暴风雪中迷失方向".
@@ -84,6 +86,11 @@ var coldProgress = [0, 0];     // Per-player progress in ms: [P1, P2]
 var coldLastTick = null;       // Timestamp of last cold tick
 var coldInterval = null;       // Interval handle for cold update
 
+// v4.0.1: Lost direction notification queue — prominent overlay when penalty fires
+// Each entry: {pIndex, timestamp, duration} — duration default 3500ms
+var lostNotifications = [];     // Active lost-direction notification entries
+var lostNotifyDuration = 3500; // How long each notification stays visible (ms)
+
 // ==================== Extreme Cold Mode Logic ====================
 
 /**
@@ -107,6 +114,7 @@ function stopColdMode() {
     }
     coldProgress = [0, 0];
     coldLastTick = null;
+    lostNotifications = [];
 }
 
 /**
@@ -120,6 +128,13 @@ function updateColdProgress() {
     if (coldLastTick === null) { coldLastTick = now; return; }
     var dt = now - coldLastTick;
     coldLastTick = now;
+
+    // Clean up expired lost-direction notifications
+    for (var n = lostNotifications.length - 1; n >= 0; n--) {
+        if (now - lostNotifications[n].timestamp > lostNotifications[n].duration) {
+            lostNotifications.splice(n, 1);
+        }
+    }
 
     for (var i = 0; i < 2; i++) {
         // Skip P2 in single-player mode
@@ -171,12 +186,20 @@ function applyColdPenalty(pIndex) {
                     p.row + ',' + p.col + ') → (' + target.row + ',' + target.col + ')');
         p.row = target.row;
         p.col = target.col;
+
+        // Flash the player's position briefly via the canvas (handled in render)
+        // Add to lost notification queue for prominent overlay display
+        lostNotifications.push({
+            pIndex: pIndex,
+            timestamp: Date.now(),
+            duration: lostNotifyDuration
+        });
     } else {
         // No valid cell nearby — just log and skip
         console.log('[Cold] ' + p.name + ' penalty triggered but no valid nearby cell found');
     }
 
-    // Show message to the player
+    // Also update status bar as a secondary indicator
     statusEl.textContent = '❄️ ' + p.name + ' 在暴风雪中迷失方向！';
 }
 
@@ -841,6 +864,9 @@ function renderMaze() {
 
     // Draw extreme cold bars (v4.0) — overlay on top of everything
     drawColdBars();
+
+    // Draw lost-direction overlay (v4.0.1) — topmost, most prominent
+    drawLostDirectionOverlay();
 }
 
 function drawPotion(p) {
@@ -1105,6 +1131,279 @@ function drawColdBars() {
         ctx.textAlign = 'left';
         ctx.fillText('❄️', barX + 6, barY + barHeight / 2);
     }
+}
+
+// ==================== Lost Direction Overlay (v4.0.1) ====================
+
+/**
+ * Draw the prominent "暴风雪中迷失方向" overlay on the canvas.
+ * This is called from renderMaze() when there are active lost-direction notifications.
+ * Shows a large centered panel with player name(s), frost effects, and pulsing animation.
+ */
+function drawLostDirectionOverlay() {
+    if (lostNotifications.length === 0) return;
+
+    var now = Date.now();
+
+    // Find the most recent notification for fade-in timing
+    var newestTime = 0;
+    var activePlayers = [];
+    for (var n = 0; n < lostNotifications.length; n++) {
+        var notif = lostNotifications[n];
+        var elapsed = now - notif.timestamp;
+        if (elapsed < notif.duration) {
+            if (activePlayers.indexOf(notif.pIndex) === -1) {
+                activePlayers.push(notif.pIndex);
+            }
+            if (notif.timestamp > newestTime) {
+                newestTime = notif.timestamp;
+            }
+        }
+    }
+
+    if (activePlayers.length === 0) return;
+
+    // Calculate fade-in (0→1 over first 400ms)
+    var newestElapsed = now - newestTime;
+    var overallAlpha = Math.min(1, newestElapsed / 400);
+
+    // Panel dimensions — centered, dynamically sized for content
+    var panelW = Math.floor(canvas.width * 0.78);
+    var panelH = Math.floor(canvas.height * 0.26);
+    var panelX = Math.floor((canvas.width - panelW) / 2);
+    var panelY = Math.floor(canvas.height * 0.15);
+
+    // === Beautiful snowflake particles (full canvas, behind + over panel) ===
+    var numFlakes = 40;
+    for (var f = 0; f < numFlakes; f++) {
+        var fx = ((f * 137 + now * 0.02) % (canvas.width + 60)) - 30;
+        var fy = ((f * 89 + now * 0.025) % (canvas.height + 60)) - 30;
+        var flakeSize = 2.5 + (f % 5) * 1.8;
+        var flakeAlpha = (0.25 + Math.sin(now / 600 + f * 1.7) * 0.2) * overallAlpha;
+        drawSnowflake(fx, fy, flakeSize, flakeAlpha, now + f * 100);
+    }
+
+    // === Main panel background (frosted dark glass) ===
+    ctx.fillStyle = 'rgba(5, 12, 30, ' + (0.92 * overallAlpha) + ')';
+    ctx.fillRect(panelX, panelY, panelW, panelH);
+
+    // === Outer icy border with pulse ===
+    var borderPulse = Math.sin(now / 250) * 0.3 + 0.7;
+    ctx.strokeStyle = 'rgba(100, 200, 240, ' + (borderPulse * overallAlpha) + ')';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(panelX, panelY, panelW, panelH);
+
+    // === Inner danger border (red pulsing) ===
+    var dangerPulse = Math.sin(now / 200) * 0.4 + 0.6;
+    ctx.strokeStyle = 'rgba(255, 60, 80, ' + (dangerPulse * 0.7 * overallAlpha) + ')';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(panelX + 4, panelY + 4, panelW - 8, panelH - 8);
+
+    // === Top accent line (icy glow) ===
+    var accentGrad = ctx.createLinearGradient(panelX, panelY, panelX + panelW, panelY);
+    accentGrad.addColorStop(0, 'rgba(120, 200, 240, 0)');
+    accentGrad.addColorStop(0.2, 'rgba(120, 200, 240, ' + (0.8 * overallAlpha) + ')');
+    accentGrad.addColorStop(0.8, 'rgba(120, 200, 240, ' + (0.8 * overallAlpha) + ')');
+    accentGrad.addColorStop(1, 'rgba(120, 200, 240, 0)');
+    ctx.strokeStyle = accentGrad;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(panelX + 10, panelY + 2);
+    ctx.lineTo(panelX + panelW - 10, panelY + 2);
+    ctx.stroke();
+
+    // === Title: "🌨️ 暴风雪来袭！" ===
+    var titleFontSize = Math.max(18, Math.floor(panelH * 0.2));
+    ctx.fillStyle = 'rgba(180, 220, 255, ' + overallAlpha + ')';
+    ctx.font = 'bold ' + titleFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    var titleY = panelY + Math.floor(panelH * 0.07);
+    ctx.fillText('🌨️ 暴风雪来袭！', panelX + panelW / 2, titleY);
+
+    // === Separator line ===
+    var sepY = titleY + titleFontSize + Math.floor(panelH * 0.04);
+    var sepW = Math.floor(panelW * 0.45);
+    ctx.strokeStyle = 'rgba(120, 180, 220, ' + (0.5 * overallAlpha) + ')';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(panelX + (panelW - sepW) / 2, sepY);
+    ctx.lineTo(panelX + (panelW + sepW) / 2, sepY);
+    ctx.stroke();
+
+    // === Player lines — each line is individually centered ===
+    var bodyFontSize = Math.max(15, Math.floor(panelH * 0.17));
+    var lineSpacing = bodyFontSize + Math.floor(panelH * 0.08);
+    var bodyY = sepY + Math.floor(panelH * 0.08);
+
+    for (var a = 0; a < activePlayers.length; a++) {
+        var pi = activePlayers[a];
+        var pp = players[pi];
+        var playerLineY = bodyY + a * lineSpacing + bodyFontSize / 2;
+
+        // Draw the full line centered: [dot] Name 在暴风雪中迷失方向！
+        // Measure the total width to center the whole block
+        ctx.font = 'bold ' + bodyFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
+        var nameWidth = ctx.measureText(pp.name).width;
+        var spaceWidth = ctx.measureText(' ').width;
+
+        ctx.font = bodyFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
+        var msgWidth = ctx.measureText('在暴风雪中迷失方向！').width;
+
+        var dotRadius = Math.max(6, bodyFontSize * 0.35);
+        var dotGap = bodyFontSize * 0.5;
+        var totalWidth = dotRadius * 2 + dotGap + nameWidth + spaceWidth + msgWidth;
+        var lineStartX = panelX + (panelW - totalWidth) / 2;
+
+        // Colored dot
+        var dotX = lineStartX + dotRadius;
+        ctx.fillStyle = pp.color;
+        ctx.beginPath();
+        ctx.arc(dotX, playerLineY, dotRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Player name (colored, bold)
+        var nameX = dotX + dotRadius + dotGap;
+        ctx.fillStyle = pp.color;
+        ctx.font = 'bold ' + bodyFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(pp.name, nameX, playerLineY);
+
+        // "在暴风雪中迷失方向！" (warm orange-white glow)
+        var lostX = nameX + nameWidth + spaceWidth;
+        ctx.fillStyle = 'rgba(255, 220, 160, ' + overallAlpha + ')';
+        ctx.font = bodyFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
+        ctx.fillText('在暴风雪中迷失方向！', lostX, playerLineY);
+    }
+
+    // === Bottom emphasis line (if both players lost) ===
+    if (activePlayers.length >= 2) {
+        var emY = bodyY + activePlayers.length * lineSpacing + Math.floor(panelH * 0.03);
+        var emFontSize = Math.max(12, Math.floor(panelH * 0.13));
+        ctx.fillStyle = 'rgba(255, 100, 100, ' + (dangerPulse * overallAlpha) + ')';
+        ctx.font = 'italic ' + emFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText('⚠️ 两位玩家都在暴风雪中迷失了！', panelX + panelW / 2, emY);
+    }
+
+    // === Bottom snow drift line ===
+    var driftY = panelY + panelH - 3;
+    ctx.strokeStyle = 'rgba(180, 220, 255, ' + (0.5 * overallAlpha) + ')';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(panelX + 20, driftY);
+    for (var dx = 0; dx <= panelW - 40; dx += 8) {
+        var dy = Math.sin(now / 400 + dx / 30) * 2;
+        ctx.lineTo(panelX + 20 + dx, driftY + dy);
+    }
+    ctx.stroke();
+
+    // Reset text alignment
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
+}
+
+/**
+ * Draw a single beautiful snowflake (❄ 6-pointed star shape) at the given position.
+ * @param {number} x - Center X
+ * @param {number} y - Center Y
+ * @param {number} size - Base radius
+ * @param {number} alpha - Opacity
+ * @param {number} seed - Deterministic rotation seed
+ */
+function drawSnowflake(x, y, size, alpha, seed) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    var arms = 6;
+    var angleStep = (Math.PI * 2) / arms;
+    var rotation = (seed * 0.01745) % (Math.PI * 2); // convert seed to radians
+
+    // === Outer glow ===
+    ctx.fillStyle = 'rgba(200, 230, 255, 0.15)';
+    ctx.beginPath();
+    ctx.arc(x, y, size * 1.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    for (var a = 0; a < arms; a++) {
+        var angle = rotation + a * angleStep;
+
+        // Main arm
+        var tipX = x + Math.cos(angle) * size;
+        var tipY = y + Math.sin(angle) * size;
+
+        // Side branch positions
+        var branch1Ratio = 0.45;
+        var branch2Ratio = 0.7;
+
+        var b1x = x + Math.cos(angle) * size * branch1Ratio;
+        var b1y = y + Math.sin(angle) * size * branch1Ratio;
+        var b2x = x + Math.cos(angle) * size * branch2Ratio;
+        var b2y = y + Math.sin(angle) * size * branch2Ratio;
+
+        var branchLen = size * 0.25;
+
+        // Draw main arm (thick line from center to tip)
+        ctx.strokeStyle = 'rgba(220, 240, 255, 0.9)';
+        ctx.lineWidth = Math.max(1, size * 0.2);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(tipX, tipY);
+        ctx.stroke();
+
+        // Side branch at 45%
+        var perpAngle1 = angle + Math.PI / 2;
+        var sb1x1 = b1x + Math.cos(perpAngle1) * branchLen;
+        var sb1y1 = b1y + Math.sin(perpAngle1) * branchLen;
+        var sb1x2 = b1x - Math.cos(perpAngle1) * branchLen;
+        var sb1y2 = b1y - Math.sin(perpAngle1) * branchLen;
+
+        ctx.strokeStyle = 'rgba(220, 240, 255, 0.7)';
+        ctx.lineWidth = Math.max(0.8, size * 0.13);
+        ctx.beginPath();
+        ctx.moveTo(sb1x1, sb1y1);
+        ctx.lineTo(sb1x2, sb1y2);
+        ctx.stroke();
+
+        // Side branch at 70%
+        var perpAngle2 = angle + Math.PI / 2.2;
+        var sb2x1 = b2x + Math.cos(perpAngle2) * branchLen * 0.7;
+        var sb2y1 = b2y + Math.sin(perpAngle2) * branchLen * 0.7;
+        var sb2x2 = b2x - Math.cos(perpAngle2) * branchLen * 0.7;
+        var sb2y2 = b2y - Math.sin(perpAngle2) * branchLen * 0.7;
+
+        ctx.strokeStyle = 'rgba(220, 240, 255, 0.5)';
+        ctx.lineWidth = Math.max(0.6, size * 0.1);
+        ctx.beginPath();
+        ctx.moveTo(sb2x1, sb2y1);
+        ctx.lineTo(sb2x2, sb2y2);
+        ctx.stroke();
+
+        // Tiny tip sparkle
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.beginPath();
+        ctx.arc(tipX, tipY, Math.max(0.8, size * 0.15), 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Center dot
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(1, size * 0.22), 0, Math.PI * 2);
+    ctx.fill();
+
+    // Inner glow
+    ctx.fillStyle = 'rgba(200, 230, 255, 0.35)';
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
 }
 
 // ==================== Timer ====================
