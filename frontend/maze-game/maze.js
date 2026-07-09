@@ -214,6 +214,7 @@ function applyColdPenalty(pIndex) {
 
     if (tier === 0) {
         // === Tier 1: 在暴风雪中迷失方向 — teleport nearby (same as 4.0.2) ===
+        Sound.play('cold', 0);
         var maxDist = 5;
         var validCells = [];
         for (var dr = -maxDist; dr <= maxDist; dr++) {
@@ -251,6 +252,7 @@ function applyColdPenalty(pIndex) {
 
     } else if (tier === 1) {
         // === Tier 2: 你被雪怪赶跑了 — teleport to spawn (1,1) ===
+        Sound.play('cold', 1);
         console.log('[Cold] ' + p.name + ' Tier2 雪怪赶跑 — teleported to spawn (1,1)');
         p.row = 1;
         p.col = 1;
@@ -266,6 +268,7 @@ function applyColdPenalty(pIndex) {
 
     } else {
         // === Tier 3: 冻死 — both players die, reset entire map ===
+        Sound.play('cold', 2);
         console.log('[Cold] ' + p.name + ' Tier3 冻死 — resetting maze');
         coldDeathPending = true;  // Freeze cold progress during death animation
 
@@ -448,6 +451,7 @@ function placePotions() {
 }
 
 function collectPotion(p, potionObj) {
+    Sound.play('potion');
     // Remove this specific potion from the array
     for (var i = 0; i < potions.length; i++) {
         if (potions[i].row === potionObj.row && potions[i].col === potionObj.col) {
@@ -605,6 +609,7 @@ function placeFlames() {
  * @param {number} flameIdx - Index of the flame in the flames array
  */
 function collectFlame(pIndex, flameIdx) {
+    Sound.play('flame');
     var heatAmount = 6000;  // Reduce cold bar by 6000ms (~33% of a full bar)
     coldProgress[pIndex] = Math.max(0, coldProgress[pIndex] - heatAmount);
     var p = players[pIndex];
@@ -905,6 +910,7 @@ function moveMonsters() {
  * @param {number} pIndex - Player index (0 or 1)
  */
 function respawnPlayer(pIndex) {
+    Sound.play('monster');
     var p = players[pIndex];
     p.row = 1;
     p.col = 1;
@@ -1979,7 +1985,8 @@ function resetPlayerTimer(p) {
 
 function movePlayer(pIndex, dRow, dCol) {
     var p = players[pIndex];
-    if (p.finished) return; // Already done
+    if (p.finished) return;
+    Sound.play('move'); // Already done
 
     var nr = p.row + dRow;
     var nc = p.col + dCol;
@@ -2030,6 +2037,7 @@ function checkGameOver() {
     // Single player mode: P1 reaching end = immediate game over
     if (!twoPlayerMode) {
         if (players[0].finished) {
+            Sound.play('victory');
             var t1 = players[0].elapsed;
             statusEl.textContent = '🏆 ' + players[0].name + ' completed in ' + t1 + 's!';
             console.log('[Maze] Game over (single):', players[0].name, t1 + 's');
@@ -2044,6 +2052,7 @@ function checkGameOver() {
 
     // Two player mode: original logic
     if (players[0].finished && players[1].finished) {
+        Sound.play('victory');
         // Both finished, compare times
         var t1 = players[0].elapsed;
         var t2 = players[1].elapsed;
@@ -2167,6 +2176,7 @@ function loadMaze() {
     var size = parseInt(levelSelect.value);
 
     // Step 1: Generate local maze immediately
+    Sound.play('generate');
     console.log('[Maze] Local generation, size:', size);
     maze = generateMaze(size, size);
     mazeWidth = size;
