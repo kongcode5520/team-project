@@ -254,6 +254,23 @@ canvas {
     to   { box-shadow: 0 0 16px #e040fb, 0 0 24px #ce3fff; }
 }
 
+/* --- Cold Mode Toggle Button (v4.0) --- */
+#coldToggleBtn {
+    background-color: #2a5a7a;
+    transition: background-color 0.3s, color 0.3s;
+}
+#coldToggleBtn:hover {
+    background-color: #1a4a6a;
+}
+#coldToggleBtn.cold-on {
+    background-color: #1a4a6a;
+    box-shadow: 0 0 10px #5cb8d8, 0 0 20px rgba(92, 184, 216, 0.5);
+    border: 1px solid #5cb8d8;
+}
+#coldToggleBtn.cold-on:hover {
+    background-color: #0a3a5a;
+}
+
 /* --- Hint --- */
 .hint {
     font-size: 12px;

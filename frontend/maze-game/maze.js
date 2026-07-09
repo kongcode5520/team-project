@@ -1,11 +1,14 @@
 /* ========================================
-   Maze Game - Two-Player Mode v3.3
+   Maze Game - Two-Player Mode v4.0
    Data structure: 2D array/matrix for maze grid
    0 = path, 1 = wall
 
    Player 1 = Green  (WASD keys)
    Player 2 = Blue   (Arrow keys)
 
+   v4.0: Extreme Cold Mode — cold progress bar fills over time;
+         when full, player is randomly teleported nearby (max 5 units)
+         and shown "你在暴风雪中迷失方向".
    v3.3: Multiple potions on harder difficulties (Hell=2, Heaven=3).
    v3.2: Single-player / two-player mode toggle button.
    v3.1: Toggle button to enable/disable monster generation.
@@ -28,6 +31,7 @@ var levelSelect = document.getElementById('levelSelect');
 var regenBtn = document.getElementById('regenerateBtn');
 var fogToggleBtn = document.getElementById('fogToggleBtn');
 var monsterToggleBtn = document.getElementById('monsterToggleBtn');
+var coldToggleBtn = document.getElementById('coldToggleBtn');
 var modeToggleBtn = document.getElementById('modeToggleBtn');
 var player2Panel = document.getElementById('player2Panel');
 var vsDivider = document.getElementById('vsDivider');
@@ -69,6 +73,112 @@ var players = [
       started: false, finished: false, color: '#4e8cff', outline: '#2d5ecc',
       name: 'Player 2', label: 'P2' }
 ];
+
+// ==================== Extreme Cold Mode State ====================
+// v4.0: Cold mode — a cold progress bar fills over time per player.
+// When full, the player is randomly teleported nearby (max 5 units)
+// and shown "你在暴风雪中迷失方向". The bar then resets.
+var coldModeEnabled = false;
+var coldMaxProgress = 18000;   // 18 seconds for the bar to fill completely
+var coldProgress = [0, 0];     // Per-player progress in ms: [P1, P2]
+var coldLastTick = null;       // Timestamp of last cold tick
+var coldInterval = null;       // Interval handle for cold update
+
+// ==================== Extreme Cold Mode Logic ====================
+
+/**
+ * Start (or restart) the cold progress timer.
+ */
+function startColdMode() {
+    stopColdMode();
+    coldProgress = [0, 0];
+    coldLastTick = Date.now();
+    coldInterval = setInterval(updateColdProgress, 150);
+    console.log('[Cold] Cold mode started (max progress: ' + coldMaxProgress + 'ms)');
+}
+
+/**
+ * Stop the cold progress timer and reset progress.
+ */
+function stopColdMode() {
+    if (coldInterval) {
+        clearInterval(coldInterval);
+        coldInterval = null;
+    }
+    coldProgress = [0, 0];
+    coldLastTick = null;
+}
+
+/**
+ * Called every tick (~150ms) to advance the cold meter for each active player.
+ * When a player's meter fills, apply the penalty and reset their meter.
+ */
+function updateColdProgress() {
+    if (!coldModeEnabled) return;
+
+    var now = Date.now();
+    if (coldLastTick === null) { coldLastTick = now; return; }
+    var dt = now - coldLastTick;
+    coldLastTick = now;
+
+    for (var i = 0; i < 2; i++) {
+        // Skip P2 in single-player mode
+        if (!twoPlayerMode && i === 1) continue;
+        // Skip finished players
+        if (players[i].finished) continue;
+
+        coldProgress[i] += dt;
+        if (coldProgress[i] >= coldMaxProgress) {
+            applyColdPenalty(i);
+            coldProgress[i] = 0;
+        }
+    }
+    renderMaze();
+}
+
+/**
+ * Apply the cold penalty to a player:
+ *   - Teleport the player to a random valid path cell within Chebyshev distance ≤ 5.
+ *   - Show "你在暴风雪中迷失方向" on screen.
+ *   - Cold bar resets for that player.
+ *
+ * @param {number} pIndex - Player index (0 or 1)
+ */
+function applyColdPenalty(pIndex) {
+    var p = players[pIndex];
+    var maxDist = 5;
+
+    // Collect valid path cells within Chebyshev distance ≤ maxDist (excluding current cell)
+    var validCells = [];
+    for (var dr = -maxDist; dr <= maxDist; dr++) {
+        for (var dc = -maxDist; dc <= maxDist; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            var nr = p.row + dr;
+            var nc = p.col + dc;
+            if (nr >= 0 && nr < mazeHeight && nc >= 0 && nc < mazeWidth &&
+                maze[nr][nc] === 0) {
+                // Exclude the end cell (don't accidentally win)
+                if (!(nr === endRow && nc === endCol)) {
+                    validCells.push({row: nr, col: nc});
+                }
+            }
+        }
+    }
+
+    if (validCells.length > 0) {
+        var target = validCells[Math.floor(Math.random() * validCells.length)];
+        console.log('[Cold] ' + p.name + ' lost direction — teleported from (' +
+                    p.row + ',' + p.col + ') → (' + target.row + ',' + target.col + ')');
+        p.row = target.row;
+        p.col = target.col;
+    } else {
+        // No valid cell nearby — just log and skip
+        console.log('[Cold] ' + p.name + ' penalty triggered but no valid nearby cell found');
+    }
+
+    // Show message to the player
+    statusEl.textContent = '❄️ ' + p.name + ' 在暴风雪中迷失方向！';
+}
 
 // ==================== Monster State ====================
 // Data structure: Array of monster objects, each with position, patrol route, and movement state
@@ -728,6 +838,9 @@ function renderMaze() {
     if (twoPlayerMode) {
         drawPlayer(players[1]);
     }
+
+    // Draw extreme cold bars (v4.0) — overlay on top of everything
+    drawColdBars();
 }
 
 function drawPotion(p) {
@@ -875,6 +988,122 @@ function drawMonster(m) {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('M', mx, my + size * 0.55);
+    }
+}
+
+// ==================== Cold Bar Rendering ====================
+
+/**
+ * Draw the extreme cold progress bar(s) on the canvas.
+ * P1 bar is drawn at the bottom-left; P2 bar at the bottom-right.
+ * Each bar fills from left to right with an icy blue gradient.
+ * When nearly full (>70%), the bar pulses red as a danger warning.
+ */
+function drawColdBars() {
+    if (!coldModeEnabled) return;
+
+    var barWidth = Math.floor(canvas.width * 0.42);
+    var barHeight = Math.max(18, Math.floor(cellSize * 0.85));
+    var marginBottom = 6;
+    var marginSide = 8;
+
+    // Determine which players to draw bars for
+    var activeIndices = [];
+    if (twoPlayerMode) {
+        activeIndices = [0, 1];
+    } else {
+        activeIndices = [0];
+    }
+
+    for (var idx = 0; idx < activeIndices.length; idx++) {
+        var i = activeIndices[idx];
+        var p = players[i];
+        if (p.finished) continue;
+
+        var progress = Math.min(1, coldProgress[i] / coldMaxProgress);
+
+        // Position: P1 bottom-left, P2 bottom-right
+        var barX, barY;
+        if (activeIndices.length === 1) {
+            // Single bar: centered at bottom
+            barX = Math.floor((canvas.width - barWidth) / 2);
+        } else {
+            barX = (i === 0) ? marginSide : canvas.width - barWidth - marginSide;
+        }
+        barY = canvas.height - barHeight - marginBottom;
+
+        // === Background (dark frosted glass) ===
+        ctx.fillStyle = 'rgba(10, 15, 30, 0.85)';
+        ctx.fillRect(barX, barY, barWidth, barHeight);
+
+        // === Border ===
+        ctx.strokeStyle = '#3a7a9a';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+        // === Frosted border glow ===
+        ctx.strokeStyle = 'rgba(120, 200, 240, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(barX + 1, barY + 1, barWidth - 2, barHeight - 2);
+
+        // === Progress fill (icy gradient) ===
+        if (progress > 0.005) {
+            var fillWidth = Math.max(0, Math.floor((barWidth - 2) * progress));
+            if (fillWidth > 0) {
+                var grad = ctx.createLinearGradient(barX, barY, barX, barY + barHeight);
+                grad.addColorStop(0, '#a8e6f8');
+                grad.addColorStop(0.35, '#5cb8d8');
+                grad.addColorStop(0.65, '#2a8ab8');
+                grad.addColorStop(1, '#1a5a88');
+                ctx.fillStyle = grad;
+                ctx.fillRect(barX + 1, barY + 1, fillWidth, barHeight - 2);
+
+                // Frost shimmer on top half of the fill
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+                ctx.fillRect(barX + 1, barY + 1, fillWidth, Math.floor((barHeight - 2) * 0.4));
+
+                // Snowflake particle effect along the leading edge
+                var edgeX = barX + 1 + fillWidth;
+                if (edgeX < barX + barWidth - 1 && progress > 0.05) {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                    ctx.beginPath();
+                    ctx.arc(edgeX, barY + barHeight / 2 - 2, 2.5, 0, Math.PI * 2);
+                    ctx.arc(edgeX - 4, barY + barHeight / 2 + 2, 1.8, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
+        // === Danger pulse when bar is >70% full ===
+        if (progress > 0.7) {
+            var pulse = Math.sin(Date.now() / 180) * 0.35 + 0.4;
+            ctx.fillStyle = 'rgba(255, 40, 60, ' + pulse + ')';
+            ctx.fillRect(barX + 1, barY + 1, barWidth - 2, barHeight - 2);
+
+            // Danger border flash
+            if (progress > 0.85) {
+                var flashPulse = Math.sin(Date.now() / 120) * 0.5 + 0.5;
+                ctx.strokeStyle = 'rgba(255, 50, 50, ' + flashPulse + ')';
+                ctx.lineWidth = 2.5;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+            }
+        }
+
+        // === Label ===
+        var labelFontSize = Math.max(10, Math.floor(barHeight * 0.55));
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold ' + labelFontSize + 'px "Microsoft YaHei", "Segoe UI", Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        var label = '❄️ ' + p.label + ' 极寒 ' + Math.floor(progress * 100) + '%';
+        ctx.fillText(label, barX + barWidth / 2, barY + barHeight / 2);
+
+        // Draw snowflake icon on the left side of the bar
+        var iconSize = Math.max(7, barHeight * 0.5);
+        ctx.fillStyle = '#d0f0ff';
+        ctx.font = iconSize + 'px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText('❄️', barX + 6, barY + barHeight / 2);
     }
 }
 
@@ -1072,6 +1301,11 @@ function setupGame() {
 
     // Apply mode UI
     updateModeUI();
+
+    // Restart cold mode if enabled (v4.0)
+    if (coldModeEnabled) {
+        startColdMode();
+    }
 }
 
 function loadMaze() {
@@ -1200,6 +1434,22 @@ monsterToggleBtn.addEventListener('click', function() {
     renderMaze();
 });
 
+coldToggleBtn.addEventListener('click', function() {
+    coldModeEnabled = !coldModeEnabled;
+    if (coldModeEnabled) {
+        coldToggleBtn.textContent = '❄️ 关闭极寒';
+        coldToggleBtn.classList.add('cold-on');
+        startColdMode();
+        statusEl.textContent = '❄️ 极寒模式已开启！';
+    } else {
+        coldToggleBtn.textContent = '❄️ 极寒模式';
+        coldToggleBtn.classList.remove('cold-on');
+        stopColdMode();
+        statusEl.textContent = 'Go!';
+    }
+    renderMaze();
+});
+
 modeToggleBtn.addEventListener('click', function() {
     twoPlayerMode = !twoPlayerMode;
     updateModeUI();
@@ -1210,6 +1460,10 @@ modeToggleBtn.addEventListener('click', function() {
     players[1].row = 1; players[1].col = 1;
     players[0].finished = false;
     players[1].finished = false;
+    // Restart cold mode if enabled (v4.0)
+    if (coldModeEnabled) {
+        startColdMode();
+    }
     statusEl.textContent = 'Go!';
     renderMaze();
 });
